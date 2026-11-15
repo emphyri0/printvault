@@ -11,6 +11,8 @@ from flask import (Flask, abort, flash, g, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
 
+import slicer
+
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
@@ -82,7 +84,9 @@ def init_db():
         db.executescript(SCHEMA)
         cols = {r[1] for r in db.execute("PRAGMA table_info(prints)")}
         for col, typ in [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
-                         ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT")]:
+                         ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
+                         ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
+                         ("bed_temp", "INTEGER"), ("plate", "INTEGER")]:
             if col not in cols:
                 db.execute(f"ALTER TABLE prints ADD COLUMN {col} {typ}")
 
@@ -123,7 +127,62 @@ def form_to_print(form):
         "source_url": (lambda u: u if re.match(r"^https?://", u, re.I) else None)(form.get("source_url", "").strip()),
         "designer": form.get("designer", "").strip() or None,
         "license": form.get("license", "").strip() or None,
+        "infill": form.get("infill", "").strip() or None,
+        "plate_type": form.get("plate_type", "").strip() or None,
+        "nozzle_temp": num(form.get("nozzle_temp"), int),
+        "bed_temp": num(form.get("bed_temp"), int),
+        "plate": num(form.get("plate"), int),
     }
+
+
+SLICER_FIELDS = {"material": "materiaal", "color": "kleur", "filament_g": "gewicht",
+                 "print_time_min": "printtijd", "layer_height": "laagdikte", "nozzle": "nozzle",
+                 "infill": "infill", "plate_type": "plaattype", "nozzle_temp": "nozzletemp",
+                 "bed_temp": "bedtemp", "plate": "plaatnummer"}
+
+
+def store_bytes(print_id, kind, content, ext, original_name):
+    stored = f"{uuid.uuid4().hex}.{ext}"
+    with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
+        fh.write(content)
+    cur = get_db().execute(
+        "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
+        (print_id, kind, stored, original_name, len(content)),
+    )
+    return cur.lastrowid
+
+
+def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite_name=False):
+    """Leest een 3mf/gcode uit en werkt de print bij. Geeft een korte samenvatting terug."""
+    parsed = slicer.parse(path, original_name)
+    plates = parsed["plates"]
+    if plate_index is None:
+        plate_index = plates[0]["index"]
+    fields, filaments, thumb = slicer.plate_to_print_fields(parsed, plate_index, MATERIALS)
+    db = get_db()
+    if overwrite_name:
+        stem = re.sub(r"(\.gcode)?\.(3mf|gcode)$", "", original_name, flags=re.I)
+        fields["name"] = (parsed.get("name") or stem.replace("_", " ")).strip()[:200] or "Naamloze print"
+    if filaments:
+        p = db.execute("SELECT notes FROM prints WHERE id = ?", (print_id,)).fetchone()
+        line = "Filament (slicer): " + slicer.filament_summary(filaments)
+        notes = [l for l in (p["notes"] or "").splitlines() if not l.startswith("Filament (slicer):")]
+        fields["notes"] = "\n".join([line] + notes).strip()
+    if fields:
+        db.execute(f"UPDATE prints SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
+                   [*fields.values(), print_id])
+    if thumb:
+        content, ext = thumb
+        thumb_name = f"thumbnail-plaat-{plate_index}.{ext}"
+        exists = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name = ?",
+                            (print_id, thumb_name)).fetchone()
+        if not exists:
+            store_bytes(print_id, "photo", content, ext, thumb_name)
+    db.commit()
+    found = [label for k, label in SLICER_FIELDS.items() if fields.get(k) not in (None, "")]
+    plate_info = (f" Dit bestand heeft {len(plates)} platen; plaat {plate_index} is gebruikt."
+                  if len(plates) > 1 else "")
+    return found, plate_info
 
 
 def save_uploads(print_id, uploads):
@@ -269,6 +328,47 @@ def import_print():
     db.commit()
     flash("Geïmporteerd van MakerWorld. Vul aan wat nog ontbreekt en upload eventueel het 3mf-bestand.", "ok")
     return redirect(url_for("edit_print", print_id=cur.lastrowid))
+
+
+@app.route("/print/import-file", methods=["POST"])
+def import_file():
+    upload = request.files.get("file")
+    if not upload or not upload.filename or ext_of(upload.filename) not in {"3mf", "gcode"}:
+        flash("Kies een .3mf- of .gcode-bestand.", "warn")
+        return redirect(url_for("new_print"))
+    db = get_db()
+    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'gepland')", ("Import…",))
+    print_id = cur.lastrowid
+    save_uploads(print_id, [upload])
+    f = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id DESC LIMIT 1", (print_id,)).fetchone()
+    try:
+        found, plate_info = apply_slicer_file(print_id, os.path.join(UPLOAD_DIR, f["stored_name"]),
+                                              upload.filename, overwrite_name=True)
+    except slicer.ParseError as e:
+        db.execute("UPDATE prints SET name = ? WHERE id = ?", (upload.filename[:200], print_id))
+        db.commit()
+        flash(f"{e} Het bestand is wel bewaard; vul de rest zelf in.", "warn")
+        return redirect(url_for("edit_print", print_id=print_id))
+    if found:
+        flash(f"Ingelezen: {', '.join(found)}.{plate_info}", "ok")
+    else:
+        flash("Bestand bewaard, maar er stonden geen slicergegevens in. Vul de rest zelf in.", "warn")
+    return redirect(url_for("edit_print", print_id=print_id))
+
+
+@app.route("/file/<int:file_id>/apply", methods=["POST"])
+def apply_file(file_id):
+    f = get_db().execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
+    if f is None or ext_of(f["original_name"]) not in {"3mf", "gcode"}:
+        abort(404)
+    try:
+        found, plate_info = apply_slicer_file(f["print_id"], os.path.join(UPLOAD_DIR, f["stored_name"]),
+                                              f["original_name"], num(request.form.get("plate"), int))
+        flash((f"Ingelezen: {', '.join(found)}." if found else "Geen slicergegevens gevonden.") + plate_info,
+              "ok" if found else "warn")
+    except slicer.ParseError as e:
+        flash(str(e), "warn")
+    return redirect(url_for("show_print", print_id=f["print_id"]))
 
 
 @app.route("/print/<int:print_id>")

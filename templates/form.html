@@ -12,6 +12,15 @@
   </label>
   <small>Haalt titel, ontwerper, foto, filament en printtijd op. Het 3mf-bestand download je zelf en voeg je daarna toe.</small>
 </form>
+<form class="import" method="post" action="{{ url_for('import_file') }}" enctype="multipart/form-data">
+  <label>Importeer uit 3MF of G-code
+    <span class="pair">
+      <input name="file" type="file" accept=".3mf,.gcode" required>
+      <button class="btn">Inlezen</button>
+    </span>
+  </label>
+  <small>Leest naam, materiaal, gewicht, printtijd, thumbnail en slicerinstellingen uit een geslicede <code>.gcode.3mf</code> of <code>.gcode</code>. Het bestand wordt meteen bij de print bewaard.</small>
+</form>
 <p class="or">of vul zelf in</p>
 {% endif %}
 <form class="form" method="post" enctype="multipart/form-data">
@@ -34,6 +43,17 @@
   </label>
   <label>Laaghoogte (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
   <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
+  <label>Infill<input name="infill" value="{{ p.infill or '' }}" placeholder="15%"></label>
+  <label>Plaattype
+    <input name="plate_type" list="plate-types" value="{{ p.plate_type or '' }}" placeholder="Textured PEI Plate">
+    <datalist id="plate-types">
+      <option>Textured PEI Plate</option><option>Smooth PEI Plate</option><option>Cool Plate</option>
+      <option>Cool Plate (SuperTack)</option><option>Engineering Plate</option><option>High Temp Plate</option>
+    </datalist>
+  </label>
+  <label>Nozzletemp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
+  <label>Bedtemp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
+  <label>Plaat nr.<input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="bij 3mf met meerdere platen"></label>
   <label>Printer
     <select name="printer_id">
       <option value="">–</option>

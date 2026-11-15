@@ -24,6 +24,9 @@
   <div><dt>Printtijd</dt><dd>{{ p.print_time_min|duration }}</dd></div>
   <div><dt>Laaghoogte</dt><dd>{{ ("%g mm"|format(p.layer_height)) if p.layer_height else "–" }}</dd></div>
   <div><dt>Nozzle</dt><dd>{{ ("%g mm"|format(p.nozzle)) if p.nozzle else "–" }}</dd></div>
+  <div><dt>Infill</dt><dd>{{ p.infill or "–" }}</dd></div>
+  <div><dt>Temperatuur</dt><dd>{% if p.nozzle_temp or p.bed_temp %}{{ p.nozzle_temp or "–" }} / {{ p.bed_temp or "–" }} °C{% else %}–{% endif %}</dd></div>
+  <div><dt>Plaat</dt><dd>{{ p.plate_type or "–" }}{% if p.plate %} · nr. {{ p.plate }}{% endif %}</dd></div>
   <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
   <div><dt>Printer</dt><dd>{% if printer %}<a href="{{ url_for('index', printer=printer.id) }}">{{ printer.name }}</a>{% else %}–{% endif %}</dd></div>
   {% if p.designer %}<div><dt>Ontwerper</dt><dd>{{ p.designer }}</dd></div>{% endif %}
@@ -53,6 +56,12 @@
   <li>
     <a href="{{ url_for('download', file_id=f.id) }}">{{ f.original_name }}</a>
     <span class="meta">{{ f.size|filesize }}</span>
+    {% if f.original_name.lower().endswith(('.3mf', '.gcode')) %}
+    <form class="apply" method="post" action="{{ url_for('apply_file', file_id=f.id) }}">
+      {% if f.original_name.lower().endswith('.3mf') %}<input name="plate" inputmode="numeric" value="{{ p.plate or 1 }}" title="Plaatnummer" aria-label="Plaatnummer">{% endif %}
+      <button class="btn" title="Overschrijft de slicervelden met de gegevens uit dit bestand">Gegevens inlezen</button>
+    </form>
+    {% endif %}
     <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder bestand">×</button></form>
   </li>
   {% endfor %}

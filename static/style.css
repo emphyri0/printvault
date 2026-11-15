@@ -114,3 +114,8 @@ nav { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .preview { max-width: 240px; border-radius: 10px; }
 .check { display: flex; gap: .4rem; align-items: center; color: var(--text); }
 .check input { width: auto; }
+
+.apply { display: flex; gap: .4rem; align-items: center; }
+.apply input { width: 3.2rem; padding: .3rem .4rem; }
+.apply .btn { padding: .3rem .6rem; font-size: .85rem; }
+.import code { font-size: .85em; }
