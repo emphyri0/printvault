@@ -27,6 +27,9 @@
   <div><dt>Infill</dt><dd>{{ p.infill or "–" }}</dd></div>
   <div><dt>Temperatuur</dt><dd>{% if p.nozzle_temp or p.bed_temp %}{{ p.nozzle_temp or "–" }} / {{ p.bed_temp or "–" }} °C{% else %}–{% endif %}</dd></div>
   <div><dt>Plaat</dt><dd>{{ p.plate_type or "–" }}{% if p.plate %} · nr. {{ p.plate }}{% endif %}</dd></div>
+  {% if p.status == 'mislukt' and (p.fail_reason or p.fail_note) %}
+  <div class="failspec"><dt>Faalreden</dt><dd>{% if p.fail_reason %}<a href="{{ url_for('index', fail=p.fail_reason) }}">{{ p.fail_reason }}</a>{% endif %}{% if p.fail_note %}<span class="failnote">{{ p.fail_note }}</span>{% endif %}</dd></div>
+  {% endif %}
   <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
   <div><dt>Printer</dt><dd>{% if printer %}<a href="{{ url_for('index', printer=printer.id) }}">{{ printer.name }}</a>{% else %}–{% endif %}</dd></div>
   {% if p.designer %}<div><dt>Ontwerper</dt><dd>{{ p.designer }}</dd></div>{% endif %}

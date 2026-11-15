@@ -10,6 +10,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
 a { color: inherit; }
 main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1rem 3rem; }
@@ -128,3 +129,9 @@ nav { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .cover-tag { background: var(--accent); color: var(--accent-text); }
 .cover-btn button { background: rgba(0,0,0,.55); color: #fff; cursor: pointer; opacity: .85; }
 .cover-btn button:hover { opacity: 1; }
+
+fieldset.fail { border: 1px dashed var(--danger); border-radius: 10px; padding: .8rem 1rem; margin: 0;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .9rem 1rem; }
+.failspec { border-color: var(--danger) !important; }
+.failspec dd a { text-decoration: none; }
+.failnote { display: block; font-weight: 400; font-size: .85rem; color: var(--muted); }

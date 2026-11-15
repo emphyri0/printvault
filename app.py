@@ -21,6 +21,7 @@ PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
 MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
 STATUSES = ["gepland", "gelukt", "mislukt", "opnieuw"]
 MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
+FAIL_REASONS = ["hechting", "warping", "spaghetti", "verstopping", "stroomuitval", "anders"]
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
@@ -86,7 +87,8 @@ def init_db():
         for col, typ in [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
                          ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
                          ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
-                         ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER")]:
+                         ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER"),
+                         ("fail_reason", "TEXT"), ("fail_note", "TEXT")]:
             if col not in cols:
                 db.execute(f"ALTER TABLE prints ADD COLUMN {col} {typ}")
 
@@ -107,6 +109,8 @@ def num(value, cast=float):
 
 def form_to_print(form):
     status = form.get("status", "gepland")
+    failed = status == "mislukt"
+    reason = form.get("fail_reason", "")
     hours = num(form.get("hours"), int) or 0
     minutes = num(form.get("minutes"), int) or 0
     total = hours * 60 + minutes
@@ -132,6 +136,8 @@ def form_to_print(form):
         "nozzle_temp": num(form.get("nozzle_temp"), int),
         "bed_temp": num(form.get("bed_temp"), int),
         "plate": num(form.get("plate"), int),
+        "fail_reason": reason if failed and reason in FAIL_REASONS else None,
+        "fail_note": (form.get("fail_note", "").strip() or None) if failed else None,
     }
 
 
@@ -247,7 +253,8 @@ def filesize(size):
 @app.context_processor
 def inject_lists():
     printers = get_db().execute("SELECT id, name FROM printers ORDER BY name").fetchall()
-    return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES}
+    return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
+            "fail_reasons": FAIL_REASONS}
 
 
 @app.route("/")
@@ -256,6 +263,7 @@ def index():
     material = request.args.get("material", "")
     status = request.args.get("status", "")
     printer = num(request.args.get("printer"), int)
+    fail = request.args.get("fail", "")
     sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
@@ -271,6 +279,9 @@ def index():
     if status:
         sql += " AND p.status = ?"
         args.append(status)
+    if fail in FAIL_REASONS:
+        sql += " AND p.status = 'mislukt' AND p.fail_reason = ?"
+        args.append(fail)
     sql += " ORDER BY COALESCE(p.printed_on, p.created_at) DESC, p.id DESC"
     db = get_db()
     prints = db.execute(sql, args).fetchall()
@@ -283,7 +294,7 @@ def index():
            FROM prints"""
     ).fetchone()
     return render_template("index.html", prints=prints, stats=stats, q=q,
-                           material=material, status=status, printer=printer)
+                           material=material, status=status, printer=printer, fail=fail)
 
 
 @app.route("/print/new", methods=["GET", "POST"])

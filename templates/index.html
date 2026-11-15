@@ -24,8 +24,12 @@
     <option value="">Alle statussen</option>
     {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
   </select>
+  <select name="fail">
+    <option value="">Alle faalredenen</option>
+    {% for r in fail_reasons %}<option {% if r == fail %}selected{% endif %}>{{ r }}</option>{% endfor %}
+  </select>
   <button class="btn">Filter</button>
-  {% if q or material or status or printer %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
+  {% if q or material or status or printer or fail %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
 </form>
 
 {% if prints %}
@@ -35,7 +39,7 @@
     <div class="thumb">
       {% if p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
       {% else %}<div class="nothumb">geen foto</div>{% endif %}
-      <span class="badge {{ p.status }}">{{ p.status }}</span>
+      <span class="badge {{ p.status }}">{{ p.status }}{% if p.status == 'mislukt' and p.fail_reason %} · {{ p.fail_reason }}{% endif %}</span>
     </div>
     <div class="body">
       <h3>{{ p.name }}</h3>
@@ -49,6 +53,6 @@
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">{% if q or material or status or printer %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
+<p class="empty">{% if q or material or status or printer or fail %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
 {% endif %}
 {% endblock %}

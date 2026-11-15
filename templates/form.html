@@ -67,6 +67,15 @@
     </select>
   </label>
   <label>Geprint op<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  <fieldset class="fail wide" id="fail-fields" {% if p.status != 'mislukt' %}hidden{% endif %}>
+    <label>Faalreden
+      <select name="fail_reason" id="fail-reason">
+        <option value="">– kies –</option>
+        {% for r in fail_reasons %}<option {% if r == p.fail_reason %}selected{% endif %}>{{ r }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Toelichting<input name="fail_note" id="fail-note" value="{{ p.fail_note or '' }}" placeholder="Wat ging er mis? Bij 'anders' graag invullen."></label>
+  </fieldset>
   <label class="wide">Bronlink<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="bv. MakerWorld- of Printables-link"></label>
   <label>Ontwerper<input name="designer" value="{{ p.designer or '' }}"></label>
   <label>Licentie<input name="license" value="{{ p.license or '' }}" placeholder="bv. BY-NC-SA"></label>
@@ -81,4 +90,19 @@
     <a class="btn ghost" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">Annuleer</a>
   </div>
 </form>
+<script>
+  (function () {
+    var status = document.querySelector('select[name="status"]');
+    var box = document.getElementById('fail-fields');
+    var reason = document.getElementById('fail-reason');
+    var note = document.getElementById('fail-note');
+    function sync() {
+      box.hidden = status.value !== 'mislukt';
+      note.required = !box.hidden && reason.value === 'anders';
+    }
+    status.addEventListener('change', sync);
+    reason.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 {% endblock %}
