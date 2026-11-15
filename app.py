@@ -1,5 +1,9 @@
+import html
+import json
 import os
+import re
 import sqlite3
+import urllib.request
 import uuid
 from datetime import date
 
@@ -37,6 +41,14 @@ CREATE TABLE IF NOT EXISTS prints (
     printed_on TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS printers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    model TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    photo TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
@@ -68,6 +80,11 @@ def init_db():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     with sqlite3.connect(DB_PATH) as db:
         db.executescript(SCHEMA)
+        cols = {r[1] for r in db.execute("PRAGMA table_info(prints)")}
+        for col, typ in [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
+                         ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT")]:
+            if col not in cols:
+                db.execute(f"ALTER TABLE prints ADD COLUMN {col} {typ}")
 
 
 def ext_of(filename):
@@ -102,6 +119,10 @@ def form_to_print(form):
         "tags": ", ".join(t.strip() for t in form.get("tags", "").split(",") if t.strip()),
         "notes": form.get("notes", "").strip(),
         "printed_on": form.get("printed_on") or None,
+        "printer_id": num(form.get("printer_id"), int),
+        "source_url": (lambda u: u if re.match(r"^https?://", u, re.I) else None)(form.get("source_url", "").strip()),
+        "designer": form.get("designer", "").strip() or None,
+        "license": form.get("license", "").strip() or None,
     }
 
 
@@ -156,16 +177,26 @@ def filesize(size):
     return f"{size:.1f} TB"
 
 
+@app.context_processor
+def inject_lists():
+    printers = get_db().execute("SELECT id, name FROM printers ORDER BY name").fetchall()
+    return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES}
+
+
 @app.route("/")
 def index():
     q = request.args.get("q", "").strip()
     material = request.args.get("material", "")
     status = request.args.get("status", "")
-    sql = """SELECT p.*,
+    printer = num(request.args.get("printer"), int)
+    sql = """SELECT p.*, pr.name AS printer_name,
                (SELECT stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
                 ORDER BY f.id LIMIT 1) AS cover
-             FROM prints p WHERE 1=1"""
+             FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
+    if printer:
+        sql += " AND p.printer_id = ?"
+        args.append(printer)
     if q:
         sql += " AND (p.name LIKE ? OR p.tags LIKE ? OR p.description LIKE ? OR p.notes LIKE ?)"
         args += [f"%{q}%"] * 4
@@ -187,8 +218,7 @@ def index():
            FROM prints"""
     ).fetchone()
     return render_template("index.html", prints=prints, stats=stats, q=q,
-                           material=material, status=status,
-                           materials=MATERIALS, statuses=STATUSES)
+                           material=material, status=status, printer=printer)
 
 
 @app.route("/print/new", methods=["GET", "POST"])
@@ -207,15 +237,47 @@ def new_print():
         save_uploads(cur.lastrowid, request.files.getlist("files"))
         flash("Print opgeslagen.", "ok")
         return redirect(url_for("show_print", print_id=cur.lastrowid))
-    return render_template("form.html", p={"status": "gelukt", "printed_on": date.today().isoformat()},
-                           materials=MATERIALS, statuses=STATUSES)
+    defaults = {"status": "gelukt", "printed_on": date.today().isoformat()}
+    only = get_db().execute("SELECT id FROM printers").fetchall()
+    if len(only) == 1:
+        defaults["printer_id"] = only[0]["id"]
+    return render_template("form.html", p=defaults)
+
+
+@app.route("/print/import", methods=["POST"])
+def import_print():
+    url = request.form.get("url", "").strip()
+    try:
+        data, cover = fetch_makerworld(url)
+    except MakerWorldError as e:
+        flash(str(e), "warn")
+        return redirect(url_for("new_print"))
+    db = get_db()
+    cur = db.execute(
+        f"INSERT INTO prints ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
+        list(data.values()),
+    )
+    if cover:
+        content, ext = cover
+        stored = f"{uuid.uuid4().hex}.{ext}"
+        with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
+            fh.write(content)
+        db.execute(
+            "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
+            (cur.lastrowid, "photo", stored, f"makerworld-cover.{ext}", len(content)),
+        )
+    db.commit()
+    flash("Geïmporteerd van MakerWorld. Vul aan wat nog ontbreekt en upload eventueel het 3mf-bestand.", "ok")
+    return redirect(url_for("edit_print", print_id=cur.lastrowid))
 
 
 @app.route("/print/<int:print_id>")
 def show_print(print_id):
     p = get_print(print_id)
-    files = get_db().execute("SELECT * FROM files WHERE print_id = ? ORDER BY id", (print_id,)).fetchall()
-    return render_template("detail.html", p=p,
+    db = get_db()
+    files = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id", (print_id,)).fetchall()
+    printer = db.execute("SELECT * FROM printers WHERE id = ?", (p["printer_id"],)).fetchone() if p["printer_id"] else None
+    return render_template("detail.html", p=p, printer=printer,
                            photos=[f for f in files if f["kind"] == "photo"],
                            models=[f for f in files if f["kind"] == "model"])
 
@@ -282,6 +344,212 @@ def download(file_id):
         abort(404)
     return send_from_directory(UPLOAD_DIR, f["stored_name"], as_attachment=True,
                                download_name=f["original_name"])
+
+
+# ---------- Printers ----------
+
+def printer_from_form(form):
+    return {
+        "name": form.get("name", "").strip(),
+        "model": form.get("model", "").strip(),
+        "notes": form.get("notes", "").strip(),
+    }
+
+
+def save_printer_photo(upload):
+    """Slaat een geüploade printerfoto op en geeft de stored_name terug (of None)."""
+    if not upload or not upload.filename:
+        return None
+    ext = ext_of(upload.filename)
+    if ext not in PHOTO_EXT:
+        flash("Printerfoto overgeslagen: alleen jpg, png, webp of gif.", "warn")
+        return None
+    stored = f"{uuid.uuid4().hex}.{ext}"
+    upload.save(os.path.join(UPLOAD_DIR, stored))
+    return stored
+
+
+def remove_upload(stored_name):
+    if not stored_name:
+        return
+    try:
+        os.remove(os.path.join(UPLOAD_DIR, stored_name))
+    except FileNotFoundError:
+        pass
+
+
+@app.route("/printers")
+def printers():
+    rows = get_db().execute(
+        """SELECT pr.*, COUNT(p.id) AS n,
+                  COALESCE(SUM(p.filament_g), 0) AS grams,
+                  COALESCE(SUM(p.print_time_min), 0) AS minutes,
+                  SUM(p.status = 'gelukt') AS ok
+           FROM printers pr LEFT JOIN prints p ON p.printer_id = pr.id
+           GROUP BY pr.id ORDER BY pr.name"""
+    ).fetchall()
+    return render_template("printers.html", printers=rows)
+
+
+@app.route("/printers/new", methods=["GET", "POST"])
+def new_printer():
+    if request.method == "POST":
+        data = printer_from_form(request.form)
+        if not data["name"]:
+            flash("Geef de printer een naam.", "warn")
+            return render_template("printer_form.html", pr=data)
+        data["photo"] = save_printer_photo(request.files.get("photo"))
+        db = get_db()
+        db.execute("INSERT INTO printers (name, model, notes, photo) VALUES (?,?,?,?)",
+                   (data["name"], data["model"], data["notes"], data["photo"]))
+        db.commit()
+        flash("Printer toegevoegd.", "ok")
+        return redirect(url_for("printers"))
+    return render_template("printer_form.html", pr={})
+
+
+@app.route("/printers/<int:printer_id>/edit", methods=["GET", "POST"])
+def edit_printer(printer_id):
+    db = get_db()
+    pr = db.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
+    if pr is None:
+        abort(404)
+    if request.method == "POST":
+        data = printer_from_form(request.form)
+        if not data["name"]:
+            flash("Geef de printer een naam.", "warn")
+            return render_template("printer_form.html", pr={**data, "id": printer_id, "photo": pr["photo"]})
+        photo = pr["photo"]
+        new_photo = save_printer_photo(request.files.get("photo"))
+        if new_photo or request.form.get("remove_photo"):
+            remove_upload(photo)
+            photo = new_photo
+        db.execute("UPDATE printers SET name = ?, model = ?, notes = ?, photo = ? WHERE id = ?",
+                   (data["name"], data["model"], data["notes"], photo, printer_id))
+        db.commit()
+        flash("Printer opgeslagen.", "ok")
+        return redirect(url_for("printers"))
+    return render_template("printer_form.html", pr=pr)
+
+
+@app.route("/printers/<int:printer_id>/delete", methods=["POST"])
+def delete_printer(printer_id):
+    db = get_db()
+    pr = db.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
+    if pr is None:
+        abort(404)
+    remove_upload(pr["photo"])
+    db.execute("UPDATE prints SET printer_id = NULL WHERE printer_id = ?", (printer_id,))
+    db.execute("DELETE FROM printers WHERE id = ?", (printer_id,))
+    db.commit()
+    flash("Printer verwijderd. De prints zelf blijven bewaard.", "ok")
+    return redirect(url_for("printers"))
+
+
+# ---------- MakerWorld-import ----------
+
+MW_API = "https://makerworld.com/api/v1/design-service/design/{}"
+MW_IMAGE_HOST = re.compile(r"^https://[a-z0-9.-]+\.bblmw\.com/")
+MW_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+MAX_COVER_BYTES = 15 * 1024 * 1024
+
+
+class MakerWorldError(Exception):
+    pass
+
+
+def _http_get(url, limit):
+    req = urllib.request.Request(url, headers={"User-Agent": MW_UA, "Accept-Language": "en"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = resp.read(limit + 1)
+    if len(body) > limit:
+        raise MakerWorldError("Antwoord van MakerWorld is te groot.")
+    return body
+
+
+def _strip_html(text):
+    text = re.sub(r"<\s*(br|/p|/li|/h\d)\s*/?>", "\n", text or "", flags=re.I)
+    text = html.unescape(re.sub(r"<[^>]+>", "", text))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def fetch_makerworld(url):
+    """Haalt metadata van een MakerWorld-model op. Geeft (printdata, cover) terug;
+    cover is (bytes, extensie) of None."""
+    m = re.match(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d+)", url, re.I)
+    if not m:
+        raise MakerWorldError("Dat lijkt geen MakerWorld-modellink (https://makerworld.com/…/models/…).")
+    design_id = m.group(2)
+    try:
+        d = json.loads(_http_get(MW_API.format(design_id), 5 * 1024 * 1024))
+    except MakerWorldError:
+        raise
+    except Exception as e:
+        raise MakerWorldError(f"MakerWorld kon niet worden opgehaald ({e}). Vul de print handmatig in.")
+    if not d.get("title"):
+        raise MakerWorldError("Model niet gevonden op MakerWorld.")
+
+    instances = d.get("instances") or []
+    inst = next((i for i in instances if i.get("id") == d.get("defaultInstanceId")), None) \
+        or next((i for i in instances if i.get("isDefault")), None) \
+        or (instances[0] if instances else {})
+    filaments = inst.get("instanceFilaments") or []
+
+    material = ""
+    types = {f.get("type", "").upper() for f in filaments if f.get("type")}
+    if len(types) == 1:
+        t = types.pop()
+        material = t if t in MATERIALS else "Ander"
+    elif types:
+        material = "Ander"
+
+    notes = []
+    if inst.get("title"):
+        notes.append(f"Profiel: {inst['title']}")
+    if filaments:
+        notes.append("Filament: " + ", ".join(
+            f"{f.get('type', '?')} {f.get('color', '')} ({f.get('usedG', '?')} g)".strip() for f in filaments))
+    if inst.get("needAms"):
+        notes.append("Vereist AMS.")
+    summary = _strip_html(d.get("summary"))
+    if summary:
+        notes.append("")
+        notes.append(summary[:3000])
+
+    creator = d.get("designCreator") or {}
+    prediction = inst.get("prediction")
+    data = {
+        "name": d["title"][:200],
+        "description": f"MakerWorld-model door {creator.get('name')}" if creator.get("name") else "MakerWorld-model",
+        "material": material,
+        "color": filaments[0].get("color", "") if len(filaments) == 1 else "",
+        "filament_g": float(inst["weight"]) if inst.get("weight") else None,
+        "print_time_min": round(prediction / 60) if prediction else None,
+        "layer_height": None,
+        "nozzle": None,
+        "status": "gepland",
+        "tags": ", ".join((d.get("tags") or [])[:8]),
+        "notes": "\n".join(notes),
+        "printed_on": None,
+        "printer_id": None,
+        "source_url": f"https://makerworld.com/en/models/{design_id}",
+        "designer": creator.get("name"),
+        "license": d.get("license"),
+    }
+    lh = re.search(r"(0\.\d+)\s*mm\s*layer", inst.get("title") or "", re.I)
+    if lh:
+        data["layer_height"] = float(lh.group(1))
+
+    cover = None
+    cover_url = d.get("coverUrl") or ""
+    if MW_IMAGE_HOST.match(cover_url):
+        ext = ext_of(cover_url.split("?")[0])
+        if ext in PHOTO_EXT:
+            try:
+                cover = (_http_get(cover_url, MAX_COVER_BYTES), ext)
+            except Exception:
+                cover = None
+    return data, cover
 
 
 @app.errorhandler(413)

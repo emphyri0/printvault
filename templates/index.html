@@ -14,12 +14,18 @@
     <option value="">Alle materialen</option>
     {% for m in materials %}<option {% if m == material %}selected{% endif %}>{{ m }}</option>{% endfor %}
   </select>
+  {% if all_printers %}
+  <select name="printer">
+    <option value="">Alle printers</option>
+    {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == printer %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
+  </select>
+  {% endif %}
   <select name="status">
     <option value="">Alle statussen</option>
     {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
   </select>
   <button class="btn">Filter</button>
-  {% if q or material or status %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
+  {% if q or material or status or printer %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
 </form>
 
 {% if prints %}
@@ -37,11 +43,12 @@
         {% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}
         {{ p.material or "–" }} · {{ p.print_time_min|duration }}{% if p.filament_g %} · {{ "%g"|format(p.filament_g) }} g{% endif %}
       </p>
+      {% if p.printer_name %}<p class="meta">{{ p.printer_name }}</p>{% endif %}
     </div>
   </a>
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">{% if q or material or status %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
+<p class="empty">{% if q or material or status or printer %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
 {% endif %}
 {% endblock %}

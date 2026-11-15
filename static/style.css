@@ -94,3 +94,23 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .files li a { flex: 1; word-break: break-all; }
 .files .x { background: transparent; color: var(--muted); }
 .empty { color: var(--muted); }
+
+nav { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.navlink { text-decoration: none; color: var(--muted); padding: .2rem 0; border-bottom: 2px solid transparent; }
+.navlink.active { color: var(--text); border-color: var(--accent); }
+.top { gap: .75rem; flex-wrap: wrap; }
+
+.import { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.25rem; margin: 1rem 0 .5rem; }
+.import label { display: flex; flex-direction: column; gap: .35rem; font-weight: 600; }
+.import small { color: var(--muted); }
+.import .pair input { flex: 1; }
+.or { text-align: center; color: var(--muted); margin: .5rem 0; font-size: .85rem; }
+.source { font-weight: 600; }
+
+.printers .card { display: flex; flex-direction: column; }
+.printers .body { display: flex; flex-direction: column; gap: .3rem; flex: 1; }
+.printers .actions { margin-top: auto; padding-top: .5rem; }
+.pnotes { white-space: pre-wrap; font-size: .85rem; margin: 0; }
+.preview { max-width: 240px; border-radius: 10px; }
+.check { display: flex; gap: .4rem; align-items: center; color: var(--text); }
+.check input { width: auto; }

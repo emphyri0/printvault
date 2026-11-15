@@ -8,7 +8,11 @@
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="{{ url_for('index') }}">Printvault</a>
+    <nav>
+      <a class="brand" href="{{ url_for('index') }}">Printvault</a>
+      <a class="navlink {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Prints</a>
+      <a class="navlink {% if request.endpoint and 'printer' in request.endpoint %}active{% endif %}" href="{{ url_for('printers') }}">Printers</a>
+    </nav>
     <a class="btn primary" href="{{ url_for('new_print') }}">+ Nieuwe print</a>
   </header>
   <main>

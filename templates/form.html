@@ -2,6 +2,18 @@
 {% block title %}{{ "Bewerk" if p.id else "Nieuwe print" }} · Printvault{% endblock %}
 {% block content %}
 <h1>{{ "Bewerk " ~ p.name if p.id else "Nieuwe print" }}</h1>
+{% if not p.id %}
+<form class="import" method="post" action="{{ url_for('import_print') }}">
+  <label>Importeer van MakerWorld
+    <span class="pair">
+      <input name="url" type="url" placeholder="https://makerworld.com/en/models/…" required>
+      <button class="btn">Importeer</button>
+    </span>
+  </label>
+  <small>Haalt titel, ontwerper, foto, filament en printtijd op. Het 3mf-bestand download je zelf en voeg je daarna toe.</small>
+</form>
+<p class="or">of vul zelf in</p>
+{% endif %}
 <form class="form" method="post" enctype="multipart/form-data">
   <label class="wide">Naam *<input name="name" value="{{ p.name or '' }}" required autofocus></label>
   <label class="wide">Omschrijving<input name="description" value="{{ p.description or '' }}" placeholder="bv. Benchy, kabelhouder bureau…"></label>
@@ -22,12 +34,22 @@
   </label>
   <label>Laaghoogte (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
   <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
+  <label>Printer
+    <select name="printer_id">
+      <option value="">–</option>
+      {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == p.printer_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
+    </select>
+    {% if not all_printers %}<small><a href="{{ url_for('new_printer') }}">Voeg eerst een printer toe</a></small>{% endif %}
+  </label>
   <label>Status
     <select name="status">
       {% for s in statuses %}<option {% if s == p.status %}selected{% endif %}>{{ s }}</option>{% endfor %}
     </select>
   </label>
   <label>Geprint op<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  <label class="wide">Bronlink<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="bv. MakerWorld- of Printables-link"></label>
+  <label>Ontwerper<input name="designer" value="{{ p.designer or '' }}"></label>
+  <label>Licentie<input name="license" value="{{ p.license or '' }}" placeholder="bv. BY-NC-SA"></label>
   <label class="wide">Tags<input name="tags" value="{{ p.tags or '' }}" placeholder="komma-gescheiden, bv. functioneel, gift"></label>
   <label class="wide">Notities<textarea name="notes" rows="5" placeholder="Wat ging goed of fout, instellingen, supports…">{{ p.notes or '' }}</textarea></label>
   <label class="wide">Bestanden toevoegen

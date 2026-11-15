@@ -2,6 +2,12 @@
 
 Een kleine webapp om je 3D-prints bij te houden: foto's, modelbestanden (3mf, stl, …), filament, printtijd, instellingen en notities.
 
+## Functies
+
+- Prints met foto's, modelbestanden (3mf, stl, step, obj, gcode), filament, printtijd, instellingen en notities
+- Printers met foto, en per print kiezen op welke printer hij gemaakt is
+- Importeren vanaf MakerWorld: plak een modellink en titel, ontwerper, cover, filament, gewicht en printtijd worden ingevuld (het 3mf-bestand voeg je zelf toe)
+
 ## Starten
 
 ```bash

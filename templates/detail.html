@@ -25,8 +25,12 @@
   <div><dt>Laaghoogte</dt><dd>{{ ("%g mm"|format(p.layer_height)) if p.layer_height else "–" }}</dd></div>
   <div><dt>Nozzle</dt><dd>{{ ("%g mm"|format(p.nozzle)) if p.nozzle else "–" }}</dd></div>
   <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
+  <div><dt>Printer</dt><dd>{% if printer %}<a href="{{ url_for('index', printer=printer.id) }}">{{ printer.name }}</a>{% else %}–{% endif %}</dd></div>
+  {% if p.designer %}<div><dt>Ontwerper</dt><dd>{{ p.designer }}</dd></div>{% endif %}
+  {% if p.license %}<div><dt>Licentie</dt><dd>{{ p.license }}</dd></div>{% endif %}
 </dl>
 
+{% if p.source_url %}<p><a class="source" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">Bekijk bron ↗</a></p>{% endif %}
 {% if p.tags %}<p class="tags">{% for t in p.tags.split(", ") %}<a href="{{ url_for('index', q=t) }}">{{ t }}</a>{% endfor %}</p>{% endif %}
 {% if p.notes %}<div class="notes">{{ p.notes }}</div>{% endif %}
 

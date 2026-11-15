@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Printers · Printvault{% endblock %}
+{% block content %}
+<div class="head">
+  <h1>Printers</h1>
+  <a class="btn" href="{{ url_for('new_printer') }}">+ Printer toevoegen</a>
+</div>
+{% if printers %}
+<div class="grid printers">
+  {% for pr in printers %}
+  <div class="card">
+    <div class="thumb">
+      {% if pr.photo %}<img src="{{ url_for('uploaded', stored_name=pr.photo) }}" alt="{{ pr.name }}" loading="lazy">
+      {% else %}<div class="nothumb">geen foto</div>{% endif %}
+    </div>
+    <div class="body">
+      <h3>{{ pr.name }}</h3>
+      {% if pr.model %}<p class="meta">{{ pr.model }}</p>{% endif %}
+      <p class="meta">{{ pr.n }} prints · {{ pr.ok or 0 }} gelukt · {{ "%.2f"|format(pr.grams / 1000) }} kg · {{ pr.minutes|duration }}</p>
+      {% if pr.notes %}<p class="pnotes">{{ pr.notes }}</p>{% endif %}
+      <div class="actions">
+        <a class="btn" href="{{ url_for('index', printer=pr.id) }}">Prints</a>
+        <a class="btn ghost" href="{{ url_for('edit_printer', printer_id=pr.id) }}">Bewerk</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">Nog geen printers. <a href="{{ url_for('new_printer') }}">Voeg je eerste printer toe.</a></p>
+{% endif %}
+{% endblock %}
