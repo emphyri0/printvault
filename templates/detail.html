@@ -37,17 +37,30 @@
 {% if p.tags %}<p class="tags">{% for t in p.tags.split(", ") %}<a href="{{ url_for('index', q=t) }}">{{ t }}</a>{% endfor %}</p>{% endif %}
 {% if p.notes %}<div class="notes">{{ p.notes }}</div>{% endif %}
 
-<h2>Foto's</h2>
+<h2 id="fotos">Foto's</h2>
+<form class="photo-upload" method="post" action="{{ url_for('add_photos', print_id=p.id) }}" enctype="multipart/form-data">
+  <label class="btn primary">📷 Foto maken
+    <input type="file" name="photos" accept="image/*" capture="environment" hidden onchange="this.form.submit()">
+  </label>
+  <label class="btn">Foto's kiezen
+    <input type="file" name="photos" accept="image/*" multiple hidden onchange="this.form.submit()">
+  </label>
+</form>
 {% if photos %}
 <div class="photos">
   {% for f in photos %}
-  <figure>
+  <figure class="{{ 'is-cover' if f.stored_name == cover }}">
     <a href="{{ url_for('uploaded', stored_name=f.stored_name) }}" target="_blank"><img src="{{ url_for('uploaded', stored_name=f.stored_name) }}" alt="{{ f.original_name }}" loading="lazy"></a>
-    <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder foto">×</button></form>
+    {% if f.stored_name == cover %}
+    <span class="cover-tag">omslag</span>
+    {% else %}
+    <form class="cover-btn" method="post" action="{{ url_for('set_cover', file_id=f.id) }}"><button title="Gebruik als omslagfoto in het overzicht">★ omslag</button></form>
+    {% endif %}
+    <form class="del" method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder foto">×</button></form>
   </figure>
   {% endfor %}
 </div>
-{% else %}<p class="empty">Geen foto's.</p>{% endif %}
+{% else %}<p class="empty">Nog geen foto's.</p>{% endif %}
 
 <h2>Modelbestanden</h2>
 {% if models %}

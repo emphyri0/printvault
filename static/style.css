@@ -86,7 +86,7 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .75rem; }
 .photos figure { position: relative; margin: 0; }
 .photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
-.photos form { position: absolute; top: .4rem; right: .4rem; }
+.photos form.del { position: absolute; top: .4rem; right: .4rem; }
 .x { border: 0; background: rgba(0,0,0,.55); color: #fff; width: 1.7rem; height: 1.7rem; border-radius: 50%; cursor: pointer; font-size: 1rem; line-height: 1; }
 .files { list-style: none; padding: 0; margin: 0; }
 .files li { display: flex; align-items: center; gap: .75rem; background: var(--panel); border: 1px solid var(--line);
@@ -119,3 +119,12 @@ nav { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .apply input { width: 3.2rem; padding: .3rem .4rem; }
 .apply .btn { padding: .3rem .6rem; font-size: .85rem; }
 .import code { font-size: .85em; }
+
+.photo-upload { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .9rem; }
+.photo-upload label { cursor: pointer; }
+.photos figure.is-cover img { outline: 3px solid var(--accent); outline-offset: -3px; }
+.cover-tag, .cover-btn button { position: absolute; left: .4rem; bottom: .4rem; font-size: .75rem; font-weight: 600;
+  border-radius: 99px; padding: .15rem .55rem; border: 0; }
+.cover-tag { background: var(--accent); color: var(--accent-text); }
+.cover-btn button { background: rgba(0,0,0,.55); color: #fff; cursor: pointer; opacity: .85; }
+.cover-btn button:hover { opacity: 1; }

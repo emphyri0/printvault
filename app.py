@@ -86,7 +86,7 @@ def init_db():
         for col, typ in [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
                          ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
                          ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
-                         ("bed_temp", "INTEGER"), ("plate", "INTEGER")]:
+                         ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER")]:
             if col not in cols:
                 db.execute(f"ALTER TABLE prints ADD COLUMN {col} {typ}")
 
@@ -211,6 +211,14 @@ def save_uploads(print_id, uploads):
         flash("Overgeslagen (onbekend bestandstype): " + ", ".join(skipped), "warn")
 
 
+# Omslagfoto: gekozen foto, anders de eerste echte foto, anders een slicer-/MakerWorld-thumbnail.
+COVER_SQL = """COALESCE(
+    (SELECT f.stored_name FROM files f WHERE f.id = p.cover_file_id AND f.print_id = p.id AND f.kind = 'photo'),
+    (SELECT f.stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
+       ORDER BY (f.original_name LIKE 'thumbnail-plaat-%' OR f.original_name LIKE 'makerworld-cover.%'), f.id
+       LIMIT 1))"""
+
+
 def get_print(print_id):
     row = get_db().execute("SELECT * FROM prints WHERE id = ?", (print_id,)).fetchone()
     if row is None:
@@ -248,9 +256,7 @@ def index():
     material = request.args.get("material", "")
     status = request.args.get("status", "")
     printer = num(request.args.get("printer"), int)
-    sql = """SELECT p.*, pr.name AS printer_name,
-               (SELECT stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
-                ORDER BY f.id LIMIT 1) AS cover
+    sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
     if printer:
@@ -377,7 +383,8 @@ def show_print(print_id):
     db = get_db()
     files = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id", (print_id,)).fetchall()
     printer = db.execute("SELECT * FROM printers WHERE id = ?", (p["printer_id"],)).fetchone() if p["printer_id"] else None
-    return render_template("detail.html", p=p, printer=printer,
+    cover = db.execute(f"SELECT {COVER_SQL} FROM prints p WHERE p.id = ?", (print_id,)).fetchone()[0]
+    return render_template("detail.html", p=p, printer=printer, cover=cover,
                            photos=[f for f in files if f["kind"] == "photo"],
                            models=[f for f in files if f["kind"] == "model"])
 
@@ -415,6 +422,30 @@ def delete_print(print_id):
     db.commit()
     flash("Print verwijderd.", "ok")
     return redirect(url_for("index"))
+
+
+@app.route("/print/<int:print_id>/photos", methods=["POST"])
+def add_photos(print_id):
+    get_print(print_id)
+    uploads = [f for f in request.files.getlist("photos") if f and f.filename]
+    photos = [f for f in uploads if ext_of(f.filename) in PHOTO_EXT]
+    if len(photos) < len(uploads):
+        flash("Alleen foto's (jpg, png, webp, gif) kunnen hier; andere bestanden zijn overgeslagen.", "warn")
+    if photos:
+        save_uploads(print_id, photos)
+        flash(f"{len(photos)} " + ("foto" if len(photos) == 1 else "foto's") + " toegevoegd.", "ok")
+    return redirect(url_for("show_print", print_id=print_id) + "#fotos")
+
+
+@app.route("/file/<int:file_id>/cover", methods=["POST"])
+def set_cover(file_id):
+    db = get_db()
+    f = db.execute("SELECT * FROM files WHERE id = ? AND kind = 'photo'", (file_id,)).fetchone()
+    if f is None:
+        abort(404)
+    db.execute("UPDATE prints SET cover_file_id = ? WHERE id = ?", (file_id, f["print_id"]))
+    db.commit()
+    return redirect(url_for("show_print", print_id=f["print_id"]) + "#fotos")
 
 
 @app.route("/file/<int:file_id>/delete", methods=["POST"])
