@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="stats">
+  <div><span>{{ stats.n }}</span>prints</div>
+  <div><span>{{ stats.ok or 0 }}</span>gelukt</div>
+  <div><span>{{ stats.failed or 0 }}</span>mislukt</div>
+  <div><span>{{ "%.2f"|format(stats.grams / 1000) }} kg</span>filament</div>
+  <div><span>{{ stats.minutes|duration }}</span>printtijd</div>
+</section>
+
+<form class="filters" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="Zoek op naam, tag, notitie…">
+  <select name="material">
+    <option value="">Alle materialen</option>
+    {% for m in materials %}<option {% if m == material %}selected{% endif %}>{{ m }}</option>{% endfor %}
+  </select>
+  <select name="status">
+    <option value="">Alle statussen</option>
+    {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+  </select>
+  <button class="btn">Filter</button>
+  {% if q or material or status %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
+</form>
+
+{% if prints %}
+<div class="grid">
+  {% for p in prints %}
+  <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
+    <div class="thumb">
+      {% if p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
+      {% else %}<div class="nothumb">geen foto</div>{% endif %}
+      <span class="badge {{ p.status }}">{{ p.status }}</span>
+    </div>
+    <div class="body">
+      <h3>{{ p.name }}</h3>
+      <p class="meta">
+        {% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}
+        {{ p.material or "–" }} · {{ p.print_time_min|duration }}{% if p.filament_g %} · {{ "%g"|format(p.filament_g) }} g{% endif %}
+      </p>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">{% if q or material or status %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
+{% endif %}
+{% endblock %}

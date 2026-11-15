@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}{{ "Bewerk" if p.id else "Nieuwe print" }} · Printvault{% endblock %}
+{% block content %}
+<h1>{{ "Bewerk " ~ p.name if p.id else "Nieuwe print" }}</h1>
+<form class="form" method="post" enctype="multipart/form-data">
+  <label class="wide">Naam *<input name="name" value="{{ p.name or '' }}" required autofocus></label>
+  <label class="wide">Omschrijving<input name="description" value="{{ p.description or '' }}" placeholder="bv. Benchy, kabelhouder bureau…"></label>
+
+  <label>Materiaal
+    <select name="material">
+      <option value="">–</option>
+      {% for m in materials %}<option {% if m == p.material %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Kleur<input name="color" value="{{ p.color or '' }}" placeholder="bv. zwart of #ff6600"></label>
+  <label>Filament (g)<input name="filament_g" inputmode="decimal" value="{{ '%g'|format(p.filament_g) if p.filament_g else '' }}"></label>
+  <label>Printtijd
+    <span class="pair">
+      <input name="hours" inputmode="numeric" placeholder="u" value="{{ (p.print_time_min // 60) if p.print_time_min else '' }}">
+      <input name="minutes" inputmode="numeric" placeholder="min" value="{{ (p.print_time_min % 60) if p.print_time_min else '' }}">
+    </span>
+  </label>
+  <label>Laaghoogte (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
+  <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
+  <label>Status
+    <select name="status">
+      {% for s in statuses %}<option {% if s == p.status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>Geprint op<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  <label class="wide">Tags<input name="tags" value="{{ p.tags or '' }}" placeholder="komma-gescheiden, bv. functioneel, gift"></label>
+  <label class="wide">Notities<textarea name="notes" rows="5" placeholder="Wat ging goed of fout, instellingen, supports…">{{ p.notes or '' }}</textarea></label>
+  <label class="wide">Bestanden toevoegen
+    <input type="file" name="files" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.3mf,.stl,.step,.stp,.obj,.gcode">
+    <small>Foto's (jpg, png, webp) en modellen (3mf, stl, step, obj, gcode)</small>
+  </label>
+  <div class="actions wide">
+    <button class="btn primary">Opslaan</button>
+    <a class="btn ghost" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">Annuleer</a>
+  </div>
+</form>
+{% endblock %}

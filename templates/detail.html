@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}{{ p.name }} · Printvault{% endblock %}
+{% block content %}
+<div class="head">
+  <div>
+    <h1>{{ p.name }} <span class="badge {{ p.status }}">{{ p.status }}</span></h1>
+    {% if p.description %}<p class="sub">{{ p.description }}</p>{% endif %}
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{ url_for('edit_print', print_id=p.id) }}">Bewerk</a>
+    <details class="confirm">
+      <summary class="btn danger">Verwijder</summary>
+      <form method="post" action="{{ url_for('delete_print', print_id=p.id) }}">
+        <p>Print en alle bestanden verwijderen?</p>
+        <button class="btn danger">Ja, verwijder</button>
+      </form>
+    </details>
+  </div>
+</div>
+
+<dl class="specs">
+  <div><dt>Materiaal</dt><dd>{% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}{{ p.material or "–" }} {{ p.color }}</dd></div>
+  <div><dt>Filament</dt><dd>{{ ("%g g"|format(p.filament_g)) if p.filament_g else "–" }}</dd></div>
+  <div><dt>Printtijd</dt><dd>{{ p.print_time_min|duration }}</dd></div>
+  <div><dt>Laaghoogte</dt><dd>{{ ("%g mm"|format(p.layer_height)) if p.layer_height else "–" }}</dd></div>
+  <div><dt>Nozzle</dt><dd>{{ ("%g mm"|format(p.nozzle)) if p.nozzle else "–" }}</dd></div>
+  <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
+</dl>
+
+{% if p.tags %}<p class="tags">{% for t in p.tags.split(", ") %}<a href="{{ url_for('index', q=t) }}">{{ t }}</a>{% endfor %}</p>{% endif %}
+{% if p.notes %}<div class="notes">{{ p.notes }}</div>{% endif %}
+
+<h2>Foto's</h2>
+{% if photos %}
+<div class="photos">
+  {% for f in photos %}
+  <figure>
+    <a href="{{ url_for('uploaded', stored_name=f.stored_name) }}" target="_blank"><img src="{{ url_for('uploaded', stored_name=f.stored_name) }}" alt="{{ f.original_name }}" loading="lazy"></a>
+    <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder foto">×</button></form>
+  </figure>
+  {% endfor %}
+</div>
+{% else %}<p class="empty">Geen foto's.</p>{% endif %}
+
+<h2>Modelbestanden</h2>
+{% if models %}
+<ul class="files">
+  {% for f in models %}
+  <li>
+    <a href="{{ url_for('download', file_id=f.id) }}">{{ f.original_name }}</a>
+    <span class="meta">{{ f.size|filesize }}</span>
+    <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder bestand">×</button></form>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}<p class="empty">Geen modelbestanden.</p>{% endif %}
+{% endblock %}

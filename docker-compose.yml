@@ -1,0 +1,20 @@
+name: printvault
+
+services:
+  printvault:
+    build: .
+    container_name: printvault
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    env_file: .env
+    ports:
+      # 0.0.0.0: bewust bereikbaar in het LAN en via Tailscale
+      - "0.0.0.0:8100:5000"
+    volumes:
+      - ./data:/data
+    networks:
+      - printvault
+
+networks:
+  printvault:
+    name: printvault
