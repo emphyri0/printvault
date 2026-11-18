@@ -5,13 +5,15 @@ import re
 import sqlite3
 import urllib.request
 import uuid
-from datetime import date
+from contextlib import closing
+from datetime import date, datetime
 
-from flask import (Flask, abort, flash, g, redirect, render_template, request,
+from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
 
 import slicer
+from mqtt_listener import error_code
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -19,7 +21,7 @@ DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 
 PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
 MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
-STATUSES = ["gepland", "gelukt", "mislukt", "opnieuw"]
+STATUSES = ["gepland", "bezig", "gelukt", "mislukt", "opnieuw"]
 MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
 FAIL_REASONS = ["hechting", "warping", "spaghetti", "verstopping", "stroomuitval", "anders"]
 
@@ -52,6 +54,14 @@ CREATE TABLE IF NOT EXISTS printers (
     photo TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS print_ams (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
+    ams_id TEXT,
+    tray_id TEXT,
+    tray_type TEXT,
+    tray_color TEXT
+);
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
@@ -66,7 +76,7 @@ CREATE TABLE IF NOT EXISTS files (
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(DB_PATH, timeout=30)
         g.db.row_factory = sqlite3.Row
         g.db.execute("PRAGMA foreign_keys = ON")
     return g.db
@@ -79,18 +89,34 @@ def close_db(_exc):
         db.close()
 
 
+MIGRATIONS = {
+    "prints": [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
+               ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
+               ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
+               ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER"),
+               ("fail_reason", "TEXT"), ("fail_note", "TEXT"),
+               ("started_at", "TEXT"), ("finished_at", "TEXT"), ("print_error", "INTEGER"),
+               ("task_id", "TEXT"), ("source", "TEXT")],
+    "printers": [("ip", "TEXT"), ("serial", "TEXT"), ("access_code", "TEXT"),
+                 ("mqtt_enabled", "INTEGER DEFAULT 0")],
+}
+
+
 def init_db():
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    with sqlite3.connect(DB_PATH) as db:
+    with closing(sqlite3.connect(DB_PATH, timeout=30)) as db, db:
         db.executescript(SCHEMA)
-        cols = {r[1] for r in db.execute("PRAGMA table_info(prints)")}
-        for col, typ in [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
-                         ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
-                         ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
-                         ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER"),
-                         ("fail_reason", "TEXT"), ("fail_note", "TEXT")]:
-            if col not in cols:
-                db.execute(f"ALTER TABLE prints ADD COLUMN {col} {typ}")
+        for table, columns in MIGRATIONS.items():
+            cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
+            for col, typ in columns:
+                if col not in cols:
+                    try:
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+                    except sqlite3.OperationalError as e:
+                        # webapp en listener starten tegelijk; de ander kan net voor geweest zijn
+                        if "duplicate column" not in str(e):
+                            raise
+        db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
 
 
 def ext_of(filename):
@@ -238,6 +264,20 @@ def duration(minutes):
         return "–"
     h, m = divmod(int(minutes), 60)
     return f"{h}u {m:02d}m" if h else f"{m}m"
+
+
+@app.template_filter("errcode")
+def errcode(err):
+    return error_code(err) or "–"
+
+
+@app.template_filter("clock")
+def clock(iso):
+    """'2026-11-18T19:02:00+01:00' → '18-11-2026 19:02'."""
+    try:
+        return datetime.fromisoformat(iso).strftime("%d-%m-%Y %H:%M")
+    except (TypeError, ValueError):
+        return iso or "–"
 
 
 @app.template_filter("filesize")
@@ -395,7 +435,8 @@ def show_print(print_id):
     files = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id", (print_id,)).fetchall()
     printer = db.execute("SELECT * FROM printers WHERE id = ?", (p["printer_id"],)).fetchone() if p["printer_id"] else None
     cover = db.execute(f"SELECT {COVER_SQL} FROM prints p WHERE p.id = ?", (print_id,)).fetchone()[0]
-    return render_template("detail.html", p=p, printer=printer, cover=cover,
+    ams = db.execute("SELECT * FROM print_ams WHERE print_id = ? ORDER BY ams_id, tray_id", (print_id,)).fetchall()
+    return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams,
                            photos=[f for f in files if f["kind"] == "photo"],
                            models=[f for f in files if f["kind"] == "model"])
 
@@ -490,12 +531,28 @@ def download(file_id):
 
 # ---------- Printers ----------
 
+IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$|^[A-Za-z0-9.-]+$")
+
+
 def printer_from_form(form):
+    ip = form.get("ip", "").strip()
     return {
         "name": form.get("name", "").strip(),
         "model": form.get("model", "").strip(),
         "notes": form.get("notes", "").strip(),
+        "ip": ip if IP_RE.match(ip) else "",
+        "serial": re.sub(r"[^A-Za-z0-9]", "", form.get("serial", "")),
+        # leeg laten = huidige access code behouden (die wordt nooit terug in het formulier gezet)
+        "access_code": form.get("access_code", "").strip(),
+        "mqtt_enabled": 1 if form.get("mqtt_enabled") else 0,
     }
+
+
+def public_printer(row_or_dict):
+    """Printergegevens voor het formulier, zonder access code."""
+    d = dict(row_or_dict)
+    d["has_access_code"] = bool(d.pop("access_code", None))
+    return d
 
 
 def save_printer_photo(upload):
@@ -539,11 +596,12 @@ def new_printer():
         data = printer_from_form(request.form)
         if not data["name"]:
             flash("Geef de printer een naam.", "warn")
-            return render_template("printer_form.html", pr=data)
+            return render_template("printer_form.html", pr=public_printer(data))
         data["photo"] = save_printer_photo(request.files.get("photo"))
+        data["access_code"] = data["access_code"] or None
         db = get_db()
-        db.execute("INSERT INTO printers (name, model, notes, photo) VALUES (?,?,?,?)",
-                   (data["name"], data["model"], data["notes"], data["photo"]))
+        db.execute(f"INSERT INTO printers ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
+                   list(data.values()))
         db.commit()
         flash("Printer toegevoegd.", "ok")
         return redirect(url_for("printers"))
@@ -560,18 +618,21 @@ def edit_printer(printer_id):
         data = printer_from_form(request.form)
         if not data["name"]:
             flash("Geef de printer een naam.", "warn")
-            return render_template("printer_form.html", pr={**data, "id": printer_id, "photo": pr["photo"]})
+            return render_template("printer_form.html", pr=public_printer({**data, "id": printer_id, "photo": pr["photo"]}))
         photo = pr["photo"]
         new_photo = save_printer_photo(request.files.get("photo"))
         if new_photo or request.form.get("remove_photo"):
             remove_upload(photo)
             photo = new_photo
-        db.execute("UPDATE printers SET name = ?, model = ?, notes = ?, photo = ? WHERE id = ?",
-                   (data["name"], data["model"], data["notes"], photo, printer_id))
+        if not data["access_code"]:
+            data["access_code"] = pr["access_code"]
+        data["photo"] = photo
+        db.execute(f"UPDATE printers SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
+                   [*data.values(), printer_id])
         db.commit()
         flash("Printer opgeslagen.", "ok")
         return redirect(url_for("printers"))
-    return render_template("printer_form.html", pr=pr)
+    return render_template("printer_form.html", pr=public_printer(pr))
 
 
 @app.route("/printers/<int:printer_id>/delete", methods=["POST"])
@@ -586,6 +647,22 @@ def delete_printer(printer_id):
     db.commit()
     flash("Printer verwijderd. De prints zelf blijven bewaard.", "ok")
     return redirect(url_for("printers"))
+
+
+# ---------- Live status (van de MQTT-listener) ----------
+
+LIVE_URL = os.environ.get("LIVE_URL", "http://127.0.0.1:8101/live")
+
+
+@app.route("/api/live")
+def api_live():
+    try:
+        with urllib.request.urlopen(LIVE_URL, timeout=2) as resp:
+            data = json.loads(resp.read(1024 * 1024))
+        data["available"] = True
+    except Exception:
+        data = {"available": False, "printers": []}
+    return jsonify(data)
 
 
 # ---------- MakerWorld-import ----------

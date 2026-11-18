@@ -17,6 +17,15 @@
   <label>Naam *<input name="name" value="{{ pr.name or '' }}" required autofocus placeholder="bv. Bambu"></label>
   <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="bv. Bambu Lab P2S + AMS 2 Pro"></label>
   <label class="wide">Notities<textarea name="notes" rows="4" placeholder="Nozzles, aankoopdatum, serienummer, upgrades…">{{ pr.notes or '' }}</textarea></label>
+  <fieldset class="wide mqtt">
+    <legend>Live koppeling (Bambu Lab, alleen lezen)</legend>
+    <p class="hint">Printvault luistert via MQTT mee en houdt prints automatisch bij. Er wordt niets naar de printer gestuurd; cloudmodus kan aan blijven. IP en access code vind je op de printer onder Instellingen → Netwerk/WLAN.</p>
+    <label>IP-adres<input name="ip" value="{{ pr.ip or '' }}" placeholder="bv. 192.0.2.10" inputmode="decimal" autocomplete="off"></label>
+    <label>Serienummer<input name="serial" value="{{ pr.serial or '' }}" placeholder="bv. 00M00A000000000" autocomplete="off"></label>
+    <label>Access code<input type="password" name="access_code" value="" autocomplete="new-password"
+      placeholder="{{ 'ingesteld, leeg laten om te behouden' if pr.has_access_code else '8 tekens' }}"></label>
+    <span class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live koppeling aan</span>
+  </fieldset>
   <label class="wide">Foto
     {% if pr.photo %}
     <img class="preview" src="{{ url_for('uploaded', stored_name=pr.photo) }}" alt="">

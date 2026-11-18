@@ -58,6 +58,31 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .badge.mislukt { background: var(--danger); }
 .badge.opnieuw { background: var(--warn); }
 .badge.gepland { background: #3b6fd6; }
+.badge.bezig { background: #7c4dd6; }
+
+.live { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .75rem; margin-bottom: 1rem; }
+.livecard { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1rem;
+  color: var(--text); text-decoration: none; }
+.livecard.active { border-color: #7c4dd6; }
+.livehead { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+.livestate { font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.livestate.running, .livestate.prepare { color: #7c4dd6; }
+.livestate.finish { color: #1f9d55; }
+.livestate.failed, .livestate.offline { color: var(--danger); }
+.livestate.pause { color: var(--warn); }
+.livename { margin: .35rem 0 .45rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin-bottom: .35rem; }
+.bar span { display: block; height: 100%; background: #7c4dd6; transition: width .5s; }
+
+.form fieldset.mqtt { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .9rem 1rem;
+  border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem 1rem; margin: 0; }
+.form fieldset.mqtt legend { font-size: .85rem; font-weight: 600; padding: 0 .3rem; }
+.form fieldset.mqtt .hint { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .85rem; }
+
+.ams { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: .5rem; }
+.ams li { display: flex; align-items: center; gap: .6rem; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .5rem .7rem; }
+.ams .swatch { width: 1.6rem; height: 1.6rem; border-radius: 50%; border: 1px solid var(--line); flex: none; }
+.ams small { display: block; color: var(--muted); font-size: .78rem; }
 
 .form { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: .9rem 1rem; background: var(--panel);
   border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; }

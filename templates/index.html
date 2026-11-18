@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
+<section id="live" class="live" hidden aria-live="polite"></section>
 <section class="stats">
   <div><span>{{ stats.n }}</span>prints</div>
   <div><span>{{ stats.ok or 0 }}</span>gelukt</div>
@@ -55,4 +56,57 @@
 {% else %}
 <p class="empty">{% if q or material or status or printer or fail %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
 {% endif %}
+<script>
+(function () {
+  const box = document.getElementById("live");
+  const labels = {PREPARE: "voorbereiden", RUNNING: "bezig", PAUSE: "gepauzeerd", FINISH: "klaar",
+                  FAILED: "mislukt", IDLE: "inactief"};
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+  function dur(min) {
+    if (min == null) return "–";
+    const h = Math.floor(min / 60), m = min % 60;
+    return h ? `${h}u ${String(m).padStart(2, "0")}m` : `${m}m`;
+  }
+  function render(data) {
+    const printers = (data.printers || []);
+    box.replaceChildren();
+    box.hidden = !printers.length;
+    for (const p of printers) {
+      const active = ["PREPARE", "RUNNING", "PAUSE"].includes(p.gcode_state);
+      const card = el(p.print_id ? "a" : "div", "livecard" + (active ? " active" : ""));
+      if (p.print_id) card.href = "/print/" + p.print_id;
+      const head = el("div", "livehead");
+      head.append(el("strong", null, p.printer));
+      const st = !p.connected ? "niet verbonden" : (labels[p.gcode_state] || p.gcode_state || "wachten…");
+      head.append(el("span", "livestate " + (p.connected ? (p.gcode_state || "").toLowerCase() : "offline"), st));
+      card.append(head);
+      if (active || p.gcode_state === "FINISH" || p.gcode_state === "FAILED") {
+        card.append(el("div", "livename", p.name || "–"));
+        const bar = el("div", "bar"), fill = el("span");
+        fill.style.width = Math.max(0, Math.min(100, p.percent || 0)) + "%";
+        bar.append(fill);
+        card.append(bar);
+        const meta = el("div", "meta");
+        meta.textContent = `${p.percent ?? "–"}% · nog ${dur(p.remaining_min)} · laag ${p.layer ?? "–"}/${p.total_layers ?? "–"}`
+          + (p.error && p.gcode_state === "FAILED" ? ` · fout ${p.error}` : "");
+        card.append(meta);
+      }
+      box.append(card);
+    }
+  }
+  async function poll() {
+    try {
+      const r = await fetch("/api/live", {cache: "no-store"});
+      if (r.ok) render(await r.json());
+    } catch (e) { /* stil: probeer het straks opnieuw */ }
+    setTimeout(poll, document.hidden ? 30000 : 5000);
+  }
+  poll();
+})();
+</script>
 {% endblock %}

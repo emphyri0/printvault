@@ -3,13 +3,35 @@ name: printvault
 services:
   printvault:
     build: .
+    image: printvault:local
     container_name: printvault
     restart: unless-stopped
     user: "${UID:-1000}:${GID:-1000}"
     env_file: .env
+    environment:
+      LIVE_URL: http://printvault-mqtt:8101/live
     ports:
       # 0.0.0.0: bewust bereikbaar in het LAN en via Tailscale
       - "0.0.0.0:8100:5000"
+    volumes:
+      - ./data:/data
+    networks:
+      - printvault
+
+  # Luistert (alleen lezen) via MQTT naar de printers die in Printvault een IP, serienummer
+  # en access code hebben. Live status op :8101, enkel bereikbaar binnen het printvault-netwerk.
+  printvault-mqtt:
+    image: printvault:local
+    container_name: printvault-mqtt
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    env_file: .env
+    environment:
+      LIVE_HOST: 0.0.0.0
+      LIVE_PORT: "8101"
+    command: ["python", "-u", "mqtt_listener.py"]
+    depends_on:
+      - printvault
     volumes:
       - ./data:/data
     networks:

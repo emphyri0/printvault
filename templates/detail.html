@@ -30,7 +30,12 @@
   {% if p.status == 'mislukt' and (p.fail_reason or p.fail_note) %}
   <div class="failspec"><dt>Faalreden</dt><dd>{% if p.fail_reason %}<a href="{{ url_for('index', fail=p.fail_reason) }}">{{ p.fail_reason }}</a>{% endif %}{% if p.fail_note %}<span class="failnote">{{ p.fail_note }}</span>{% endif %}</dd></div>
   {% endif %}
+  {% if p.status == 'mislukt' and p.print_error and not p.fail_note %}
+  <div class="failspec"><dt>Printerfout</dt><dd>{{ p.print_error|errcode }}</dd></div>
+  {% endif %}
   <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
+  {% if p.started_at %}<div><dt>Gestart</dt><dd>{{ p.started_at|clock }}</dd></div>{% endif %}
+  {% if p.finished_at %}<div><dt>Klaar</dt><dd>{{ p.finished_at|clock }}</dd></div>{% endif %}
   <div><dt>Printer</dt><dd>{% if printer %}<a href="{{ url_for('index', printer=printer.id) }}">{{ printer.name }}</a>{% else %}–{% endif %}</dd></div>
   {% if p.designer %}<div><dt>Ontwerper</dt><dd>{{ p.designer }}</dd></div>{% endif %}
   {% if p.license %}<div><dt>Licentie</dt><dd>{{ p.license }}</dd></div>{% endif %}
@@ -39,6 +44,16 @@
 {% if p.source_url %}<p><a class="source" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">Bekijk bron ↗</a></p>{% endif %}
 {% if p.tags %}<p class="tags">{% for t in p.tags.split(", ") %}<a href="{{ url_for('index', q=t) }}">{{ t }}</a>{% endfor %}</p>{% endif %}
 {% if p.notes %}<div class="notes">{{ p.notes }}</div>{% endif %}
+
+{% if ams %}
+<h2>AMS</h2>
+<ul class="ams">
+  {% for t in ams %}
+  <li><span class="swatch" style="background: #{{ t.tray_color[:6] or 'ccc' }}"></span>
+    <span><strong>{{ t.tray_type }}</strong><small>AMS {{ t.ams_id|int + 1 }} · slot {{ t.tray_id|int + 1 }} · #{{ t.tray_color[:6] }}</small></span></li>
+  {% endfor %}
+</ul>
+{% endif %}
 
 <h2 id="fotos">Foto's</h2>
 <form class="photo-upload" method="post" action="{{ url_for('add_photos', print_id=p.id) }}" enctype="multipart/form-data">
