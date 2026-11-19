@@ -374,14 +374,7 @@ def import_print():
         list(data.values()),
     )
     if cover:
-        content, ext = cover
-        stored = f"{uuid.uuid4().hex}.{ext}"
-        with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
-            fh.write(content)
-        db.execute(
-            "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
-            (cur.lastrowid, "photo", stored, f"makerworld-cover.{ext}", len(content)),
-        )
+        save_makerworld_cover(db, cur.lastrowid, cover)
     db.commit()
     flash("Geïmporteerd van MakerWorld. Vul aan wat nog ontbreekt en upload eventueel het 3mf-bestand.", "ok")
     return redirect(url_for("edit_print", print_id=cur.lastrowid))
@@ -450,6 +443,7 @@ def edit_print(print_id):
             flash("Geef de print een naam.", "warn")
             return render_template("form.html", p={**data, "id": print_id}, materials=MATERIALS, statuses=STATUSES)
         db = get_db()
+        mw_msg = enrich_from_makerworld(db, print_id, p, data)
         db.execute(
             f"UPDATE prints SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
             [*data.values(), print_id],
@@ -457,6 +451,8 @@ def edit_print(print_id):
         db.commit()
         save_uploads(print_id, request.files.getlist("files"))
         flash("Wijzigingen opgeslagen.", "ok")
+        if mw_msg:
+            flash(*mw_msg)
         return redirect(url_for("show_print", print_id=print_id))
     return render_template("form.html", p=p, materials=MATERIALS, statuses=STATUSES)
 
@@ -668,6 +664,7 @@ def api_live():
 # ---------- MakerWorld-import ----------
 
 MW_API = "https://makerworld.com/api/v1/design-service/design/{}"
+MW_URL = re.compile(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d+)", re.I)
 MW_IMAGE_HOST = re.compile(r"^https://[a-z0-9.-]+\.bblmw\.com/")
 MW_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 MAX_COVER_BYTES = 15 * 1024 * 1024
@@ -695,7 +692,7 @@ def _strip_html(text):
 def fetch_makerworld(url):
     """Haalt metadata van een MakerWorld-model op. Geeft (printdata, cover) terug;
     cover is (bytes, extensie) of None."""
-    m = re.match(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d+)", url, re.I)
+    m = MW_URL.match(url)
     if not m:
         raise MakerWorldError("Dat lijkt geen MakerWorld-modellink (https://makerworld.com/…/models/…).")
     design_id = m.group(2)
@@ -769,6 +766,46 @@ def fetch_makerworld(url):
             except Exception:
                 cover = None
     return data, cover
+
+def save_makerworld_cover(db, print_id, cover):
+    content, ext = cover
+    stored = f"{uuid.uuid4().hex}.{ext}"
+    with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
+        fh.write(content)
+    db.execute(
+        "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
+        (print_id, "photo", stored, f"makerworld-cover.{ext}", len(content)),
+    )
+
+
+# Velden die bij het bewerken uit MakerWorld aangevuld worden als ze nog leeg zijn.
+# Status, datum, printtijd en printer komen van de printer zelf en blijven ongemoeid.
+MW_FILL_FIELDS = ("description", "material", "color", "filament_g", "layer_height", "tags", "designer", "license")
+
+
+def enrich_from_makerworld(db, print_id, old, data):
+    """Vult `data` aan met MakerWorld-gegevens als er een (nieuwe) MakerWorld-link is opgegeven,
+    of als de print nog geen MakerWorld-omslag heeft. Geeft een flash-bericht terug of None."""
+    url = data.get("source_url") or ""
+    if not MW_URL.match(url):
+        return None
+    has_cover = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name LIKE 'makerworld-cover.%'",
+                           (print_id,)).fetchone()
+    if url == (old["source_url"] or "") and has_cover:
+        return None
+    try:
+        mw, cover = fetch_makerworld(url)
+    except MakerWorldError as e:
+        return (f"Link bewaard, maar MakerWorld-gegevens ophalen lukte niet: {e}", "warn")
+    filled = [k for k in MW_FILL_FIELDS if not data.get(k) and mw.get(k)]
+    for k in filled:
+        data[k] = mw[k]
+    if mw.get("notes") and mw["notes"] not in (data.get("notes") or ""):
+        data["notes"] = f"{data['notes']}\n\n{mw['notes']}".strip() if data.get("notes") else mw["notes"]
+    data["source_url"] = mw["source_url"]
+    if cover and not has_cover:
+        save_makerworld_cover(db, print_id, cover)
+    return ("MakerWorld-gegevens aangevuld" + (" (met afbeelding)." if cover and not has_cover else "."), "ok")
 
 
 @app.errorhandler(413)
