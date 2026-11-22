@@ -30,8 +30,9 @@
   {% if p.status == 'mislukt' and (p.fail_reason or p.fail_note) %}
   <div class="failspec"><dt>Faalreden</dt><dd>{% if p.fail_reason %}<a href="{{ url_for('index', fail=p.fail_reason) }}">{{ p.fail_reason }}</a>{% endif %}{% if p.fail_note %}<span class="failnote">{{ p.fail_note }}</span>{% endif %}</dd></div>
   {% endif %}
-  {% if p.status == 'mislukt' and p.print_error and not p.fail_note %}
-  <div class="failspec"><dt>Printerfout</dt><dd>{{ p.print_error|errcode }}</dd></div>
+  {% set err = p.print_error|errinfo %}
+  {% if err %}
+  <div class="failspec"><dt>Printerfout</dt><dd>{% if err.text %}{{ err.text }} · {% endif %}<a href="{{ err.url }}" target="_blank" rel="noopener noreferrer">{{ err.code }}</a></dd></div>
   {% endif %}
   <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
   {% if p.started_at %}<div><dt>Gestart</dt><dd>{{ p.started_at|clock }}</dd></div>{% endif %}

@@ -20,6 +20,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
+import bambu_errors
+from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code wordt ook door app gebruikt)
+
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
@@ -29,7 +32,6 @@ RELOAD_SECONDS = int(os.environ.get("MQTT_RELOAD_SECONDS", "60"))
 
 ACTIVE = {"PREPARE", "RUNNING", "PAUSE"}
 DONE = {"FINISH": "gelukt", "FAILED": "mislukt"}
-CANCELLED = 0x0300400C  # print_error als je de print zelf stopt
 
 log = logging.getLogger("printvault.mqtt")
 
@@ -46,15 +48,6 @@ def deep_merge(dst, src):
         else:
             dst[k] = v
     return dst
-
-
-def error_code(err):
-    """50348044 → '0300-400C' (notatie zoals in Bambu Studio en de Bambu-wiki)."""
-    try:
-        err = int(err)
-    except (TypeError, ValueError):
-        return None
-    return f"{err >> 16:04X}-{err & 0xFFFF:04X}" if err else None
 
 
 def ams_slots(state):
@@ -186,19 +179,28 @@ class PrinterTracker:
             if not seen_live:
                 extra = "Einde niet live gezien: eindtijd is het moment waarop de listener startte."
                 notes = f"{notes}\n{extra}".strip()
-            fail_note = None
+            fail_note = fail_reason = None
             if status == "mislukt":
-                code = error_code(err)
-                if err and int(err) == CANCELLED:
-                    fail_note = "Geannuleerd op de printer."
-                elif code:
-                    fail_note = f"Printerfout {code}"
+                fail_note, fail_reason = self._fail_info(err)
             db.execute(
                 "UPDATE prints SET status = ?, finished_at = ?, print_time_min = ?, print_error = ?, "
-                "fail_note = COALESCE(?, fail_note), notes = ? WHERE id = ?",
-                (status, now.isoformat(), minutes, int(err) if err else None, fail_note, notes, print_id))
+                "fail_note = COALESCE(NULLIF(fail_note, ''), ?), fail_reason = COALESCE(NULLIF(fail_reason, ''), ?), "
+                "notes = ? WHERE id = ?",
+                (status, now.isoformat(), minutes, int(err) if err else None, fail_note, fail_reason, notes, print_id))
             self._save_ams(db, print_id)
         log.info("printer %s: print %s %s", self.printer_id, print_id, status)
+
+    def _fail_info(self, err):
+        """(toelichting, voorgestelde faalreden) voor een mislukte print, uit print_error en actieve HMS."""
+        hms = bambu_errors.describe_hms_list(self.state.get("hms"))
+        lines = []
+        d = bambu_errors.describe_print_error(err)
+        if d and int(err) == CANCELLED:
+            lines.append("Geannuleerd op de printer.")
+        elif d:
+            lines.append(f"Printerfout {d['code']}: {d['text']}" if d["text"] else f"Printerfout {d['code']}")
+        lines += [f"HMS {bambu_errors.label(h)}" for h in hms]
+        return ("\n".join(lines) or None), bambu_errors.suggest_fail_reason(err, hms)
 
     def _close_stale(self, print_id):
         note = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
@@ -238,6 +240,8 @@ class PrinterTracker:
                 "total_layers": as_int(s.get("total_layer_num")),
                 "print_id": self.print_id,
                 "error": error_code(s.get("print_error")),
+                "error_text": (bambu_errors.describe_print_error(s.get("print_error")) or {}).get("text"),
+                "hms": bambu_errors.describe_hms_list(s.get("hms")),
                 "updated_at": self.last_message.isoformat() if self.last_message else None,
             }
 

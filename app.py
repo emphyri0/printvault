@@ -12,8 +12,9 @@ from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, r
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
 
+import bambu_errors
 import slicer
-from mqtt_listener import error_code
+from bambu_errors import error_code
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
@@ -273,6 +274,12 @@ def duration(minutes):
 @app.template_filter("errcode")
 def errcode(err):
     return error_code(err) or "–"
+
+
+@app.template_filter("errinfo")
+def errinfo(err):
+    """print_error → {code, text, reason, url} of None."""
+    return bambu_errors.describe_print_error(err)
 
 
 @app.template_filter("clock")

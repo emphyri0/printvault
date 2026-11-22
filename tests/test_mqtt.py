@@ -7,6 +7,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,7 @@ os.environ["DATA_DIR"] = _tmp
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import app  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
+import bambu_errors as be  # noqa: E402
 
 TZ = ZoneInfo("Europe/Brussels")
 
@@ -96,6 +98,34 @@ class TrackerTest(unittest.TestCase):
         p = self.prints()[0]
         self.assertEqual((p["status"], p["print_error"], p["fail_note"]), ("mislukt", 0x07008011, "Printerfout 0700-8011"))
         self.assertEqual(p["print_time_min"], 10)
+
+    def test_failed_with_known_code_fills_reason_and_hms(self):
+        t = self.tracker()
+        t.handle(report("RUNNING"))
+        hms = [{"attr": 0x0C001000, "code": 0x00030001}]
+        with mock.patch.dict(be.PRINT_ERRORS, {"0300-9999": ("Spaghetti gedetecteerd (test)", "spaghetti")}):
+            t.handle(report("FAILED", error=0x03009999, hms=hms))
+        p = self.prints()[0]
+        self.assertEqual(p["fail_reason"], "spaghetti")
+        self.assertEqual(p["fail_note"], "Printerfout 0300-9999: Spaghetti gedetecteerd (test)\n"
+                                         "HMS 0C00_1000_0003_0001 (camera/AI-detectie)")
+
+    def test_failed_keeps_manual_reason(self):
+        t = self.tracker()
+        t.handle(report("RUNNING"))
+        with ml.connect_db(app.DB_PATH) as db:
+            db.execute("UPDATE prints SET fail_reason = 'warping', fail_note = 'zelf gezien'")
+        with mock.patch.dict(be.PRINT_ERRORS, {"0300-9999": ("Test", "spaghetti")}):
+            t.handle(report("FAILED", error=0x03009999))
+        p = self.prints()[0]
+        self.assertEqual((p["fail_reason"], p["fail_note"]), ("warping", "zelf gezien"))
+
+    def test_live_has_error_text_and_hms(self):
+        t = self.tracker()
+        t.handle(report("PAUSE", error=ml.CANCELLED, hms=[{"attr": 0x07002000, "code": 0x00020001}]))
+        live = t.live()
+        self.assertEqual((live["error"], live["error_text"]), ("0300-400C", "Print geannuleerd op de printer"))
+        self.assertEqual(live["hms"][0]["code"], "0700_2000_0002_0001")
 
     def test_cancelled(self):
         t = self.tracker()
@@ -225,6 +255,16 @@ class AppTest(unittest.TestCase):
         self.assertNotIn(">b<", html)
         self.assertIn("onbekend", app.STATUSES)
         self.assertIn("opnieuw", app.STATUSES)
+
+    def test_detail_shows_error_text_and_link(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            db.execute("INSERT INTO prints (name, status, print_error) VALUES ('x', 'mislukt', ?), ('y', 'mislukt', ?)",
+                       (ml.CANCELLED, 0x07008011))
+        html = self.c.get("/print/1").get_data(as_text=True)
+        self.assertIn("Print geannuleerd op de printer", html)
+        self.assertIn("hmscode/0300_400C", html)
+        html = self.c.get("/print/2").get_data(as_text=True)
+        self.assertIn(">0700-8011</a>", html)
 
     def test_live_unavailable(self):
         app.LIVE_URL = "http://127.0.0.1:9/live"
