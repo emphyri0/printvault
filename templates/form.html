@@ -1,94 +1,117 @@
 {% extends "base.html" %}
 {% block title %}{{ "Edit" if p.id else "New print" }} · Printvault{% endblock %}
 {% block content %}
-<h1>{{ "Edit " ~ p.name if p.id else "New print" }}</h1>
+<a class="crumb" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">{{ icon('back') }}{{ "Back to the print" if p.id else "All prints" }}</a>
+<header class="dhead"><div>
+  <p class="eyebrow">{{ "Edit print" if p.id else "New print" }}</p>
+  <h1 class="dtitle">{{ p.name if p.id else "Add a print" }}</h1>
+</div></header>
+
 {% if not p.id %}
-<form class="import" method="post" action="{{ url_for('import_print') }}">
-  <label>Import from MakerWorld
-    <span class="pair">
-      <input name="url" type="url" placeholder="https://makerworld.com/en/models/…" required>
-      <button class="btn">Import</button>
-    </span>
-  </label>
-  <small>Fetches title, designer, photo, filament and print time. You download the 3mf file yourself and add it afterwards.</small>
-</form>
-<form class="import" method="post" action="{{ url_for('import_file') }}" enctype="multipart/form-data">
-  <label>Import from 3MF or G-code
-    <span class="pair">
-      <input name="file" type="file" accept=".3mf,.gcode" required>
-      <button class="btn">Read</button>
-    </span>
-  </label>
-  <small>Reads name, material, weight, print time, thumbnail and slicer settings from a sliced <code>.gcode.3mf</code> or <code>.gcode</code>. The file is stored with the print right away.</small>
-</form>
+<div class="imports">
+  <form class="panel" method="post" action="{{ url_for('import_print') }}">
+    <h2>{{ icon('link') }}Import from MakerWorld</h2>
+    <label class="f"><span class="sr">MakerWorld link</span>
+      <span class="pair">
+        <input name="url" type="url" placeholder="https://makerworld.com/en/models/…" required>
+        <button class="btn primary">Import</button>
+      </span>
+    </label>
+    <p class="hint">Fetches title, designer, photo, filament and print time. You download the 3mf file yourself and add it afterwards.</p>
+  </form>
+  <form class="panel" method="post" action="{{ url_for('import_file') }}" enctype="multipart/form-data">
+    <h2>{{ icon('file') }}Import from 3MF or G-code</h2>
+    <label class="f"><span class="sr">Sliced file</span>
+      <span class="pair">
+        <input name="file" type="file" accept=".3mf,.gcode" required>
+        <button class="btn primary">Read</button>
+      </span>
+    </label>
+    <p class="hint">Reads name, material, weight, print time, thumbnail and slicer settings from a sliced <code>.gcode.3mf</code> or <code>.gcode</code>. The file is stored with the print right away.</p>
+  </form>
+</div>
 <p class="or">or fill it in yourself</p>
 {% endif %}
+
 <form class="form" method="post" enctype="multipart/form-data">
-  <label class="wide">Name *<input name="name" value="{{ p.name or '' }}" required autofocus></label>
+  <label class="wide">Name *<input name="name" value="{{ p.name or '' }}" required {% if not p.id %}autofocus{% endif %}></label>
   <label class="wide">Description<input name="description" value="{{ p.description or '' }}" placeholder="e.g. Benchy, desk cable holder…"></label>
 
-  <label>Material
-    <select name="material">
-      <option value="">–</option>
-      {% for m in materials %}<option {% if m == p.material %}selected{% endif %}>{{ m }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Colour<input name="color" value="{{ p.color or '' }}" placeholder="e.g. black or #ff6600"></label>
-  <label>Filament (g)<input name="filament_g" inputmode="decimal" value="{{ '%g'|format(p.filament_g) if p.filament_g else '' }}"></label>
-  <label>Print time
-    <span class="pair">
-      <input name="hours" inputmode="numeric" placeholder="h" value="{{ (p.print_time_min // 60) if p.print_time_min else '' }}">
-      <input name="minutes" inputmode="numeric" placeholder="min" value="{{ (p.print_time_min % 60) if p.print_time_min else '' }}">
-    </span>
-  </label>
-  <label>Layer height (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
-  <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
-  <label>Infill<input name="infill" value="{{ p.infill or '' }}" placeholder="15%"></label>
-  <label>Plate type
-    <input name="plate_type" list="plate-types" value="{{ p.plate_type or '' }}" placeholder="Textured PEI Plate">
-    <datalist id="plate-types">
-      <option>Textured PEI Plate</option><option>Smooth PEI Plate</option><option>Cool Plate</option>
-      <option>Cool Plate (SuperTack)</option><option>Engineering Plate</option><option>High Temp Plate</option>
-    </datalist>
-  </label>
-  <label>Nozzle temp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
-  <label>Bed temp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
-  <label>Plate
-    <span class="pair">
-      <input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="no." aria-label="Plate number">
-      <input name="plate_count" inputmode="numeric" value="{{ p.plate_count or '' }}" placeholder="of" aria-label="Number of plates">
-    </span>
-  </label>
-  <label>Nozzle type<input name="nozzle_type" value="{{ p.nozzle_type or '' }}" placeholder="e.g. Hardened steel (HS01)"></label>
-  <label>Speed profile
-    <select name="speed_profile">
-      <option value="">–</option>
-      {% for sp in speed_profiles %}<option value="{{ sp }}" {% if sp == p.speed_profile %}selected{% endif %}>{{ sp|label }}</option>{% endfor %}
-    </select>
-  </label>
-  {% for field, text in [("spaghetti_detection", "Spaghetti detection"), ("first_layer_inspection", "First layer inspection")] %}
-  <label>{{ text }}
-    <select name="{{ field }}">
-      <option value="">–</option>
-      <option value="1" {% if p[field] == 1 %}selected{% endif %}>on</option>
-      <option value="0" {% if p[field] == 0 %}selected{% endif %}>off</option>
-    </select>
-  </label>
-  {% endfor %}
-  <label>Printer
-    <select name="printer_id">
-      <option value="">–</option>
-      {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == p.printer_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
-    </select>
-    {% if not all_printers %}<small><a href="{{ url_for('new_printer') }}">Add a printer first</a></small>{% endif %}
-  </label>
-  <label>Status
-    <select name="status">
-      {% for s in statuses %}<option value="{{ s }}" {% if s == p.status %}selected{% endif %}>{{ s|label }}</option>{% endfor %}
-    </select>
-  </label>
-  <label>Printed on<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  <fieldset class="wide">
+    <legend>{{ icon('spool') }}Filament and time</legend>
+    <label>Material
+      <select name="material">
+        <option value="">–</option>
+        {% for m in materials %}<option {% if m == p.material %}selected{% endif %}>{{ m }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Colour<input name="color" value="{{ p.color or '' }}" placeholder="e.g. black or #ff6600"></label>
+    <label>Filament (g)<input name="filament_g" inputmode="decimal" value="{{ '%g'|format(p.filament_g) if p.filament_g else '' }}"></label>
+    <label>Print time
+      <span class="pair">
+        <input name="hours" inputmode="numeric" placeholder="h" aria-label="Print time, hours" value="{{ (p.print_time_min // 60) if p.print_time_min else '' }}">
+        <input name="minutes" inputmode="numeric" placeholder="min" aria-label="Print time, minutes" value="{{ (p.print_time_min % 60) if p.print_time_min else '' }}">
+      </span>
+    </label>
+  </fieldset>
+
+  <fieldset class="wide">
+    <legend>{{ icon('layers') }}Slicer and printer settings</legend>
+    <label>Layer height (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
+    <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
+    <label>Nozzle type<input name="nozzle_type" value="{{ p.nozzle_type or '' }}" placeholder="e.g. Hardened steel (HS01)"></label>
+    <label>Infill<input name="infill" value="{{ p.infill or '' }}" placeholder="15%"></label>
+    <label>Nozzle temp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
+    <label>Bed temp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
+    <label>Plate type
+      <input name="plate_type" list="plate-types" value="{{ p.plate_type or '' }}" placeholder="Textured PEI Plate">
+      <datalist id="plate-types">
+        <option>Textured PEI Plate</option><option>Smooth PEI Plate</option><option>Cool Plate</option>
+        <option>Cool Plate (SuperTack)</option><option>Engineering Plate</option><option>High Temp Plate</option>
+      </datalist>
+    </label>
+    <label>Plate
+      <span class="pair">
+        <input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="no." aria-label="Plate number">
+        <input name="plate_count" inputmode="numeric" value="{{ p.plate_count or '' }}" placeholder="of" aria-label="Number of plates">
+      </span>
+    </label>
+    <label>Speed profile
+      <select name="speed_profile">
+        <option value="">–</option>
+        {% for sp in speed_profiles %}<option value="{{ sp }}" {% if sp == p.speed_profile %}selected{% endif %}>{{ sp|label }}</option>{% endfor %}
+      </select>
+    </label>
+    {% for field, text in [("spaghetti_detection", "Spaghetti detection"), ("first_layer_inspection", "First layer inspection")] %}
+    <label>{{ text }}
+      <select name="{{ field }}">
+        <option value="">–</option>
+        <option value="1" {% if p[field] == 1 %}selected{% endif %}>on</option>
+        <option value="0" {% if p[field] == 0 %}selected{% endif %}>off</option>
+      </select>
+    </label>
+    {% endfor %}
+  </fieldset>
+
+  <fieldset class="wide">
+    <legend>{{ icon('printer') }}Printer and status</legend>
+    <label>Printer
+      <select name="printer_id">
+        <option value="">–</option>
+        {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == p.printer_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
+      </select>
+      {% if not all_printers %}<small><a class="link" href="{{ url_for('new_printer') }}">Add a printer first</a></small>{% endif %}
+    </label>
+    <label>Status
+      <select name="status">
+        {% for s in statuses %}<option value="{{ s }}" {% if s == p.status %}selected{% endif %}>{{ s|label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Printed on<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  </fieldset>
+
   <fieldset class="fail wide" id="fail-fields" {% if p.status != 'failed' %}hidden{% endif %}>
+    <legend>{{ icon('alert') }}What went wrong?</legend>
     <label>Fail reason
       <select name="fail_reason" id="fail-reason">
         <option value="">– choose –</option>
@@ -97,17 +120,22 @@
     </label>
     <label>Explanation<input name="fail_note" id="fail-note" value="{{ p.fail_note or '' }}" placeholder="What went wrong? Please fill in for 'Other'."></label>
   </fieldset>
-  <label class="wide">Source link<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="e.g. a MakerWorld or Printables link"></label>
-  <label>Designer<input name="designer" value="{{ p.designer or '' }}"></label>
-  <label>Licence<input name="license" value="{{ p.license or '' }}" placeholder="e.g. BY-NC-SA"></label>
+
+  <fieldset class="wide">
+    <legend>{{ icon('link') }}Source</legend>
+    <label class="wide">Source link<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="e.g. a MakerWorld or Printables link"></label>
+    <label>Designer<input name="designer" value="{{ p.designer or '' }}"></label>
+    <label>Licence<input name="license" value="{{ p.license or '' }}" placeholder="e.g. BY-NC-SA"></label>
+  </fieldset>
+
   <label class="wide">Tags<input name="tags" value="{{ p.tags or '' }}" placeholder="comma-separated, e.g. functional, gift"></label>
   <label class="wide">Notes<textarea name="notes" rows="5" placeholder="What went well or wrong, settings, supports…">{{ p.notes or '' }}</textarea></label>
   <label class="wide">Add files
     <input type="file" name="files" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.3mf,.stl,.step,.stp,.obj,.gcode">
-    <small>Photos (jpg, png, webp) and models (3mf, stl, step, obj, gcode)</small>
+    <small>Photos (jpg, png, webp, gif) and models (3mf, stl, step, obj, gcode)</small>
   </label>
   <div class="actions wide">
-    <button class="btn primary">Save</button>
+    <button class="btn primary">{{ icon('check') }}<span>Save</span></button>
     <a class="btn ghost" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">Cancel</a>
   </div>
 </form>

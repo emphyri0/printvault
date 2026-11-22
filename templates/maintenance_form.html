@@ -1,25 +1,24 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}Edit maintenance · Printvault{% endblock %}
 {% block content %}
-<div class="head">
-  <h1>{{ t.name }} <span class="sub">· {{ pr.name }}</span></h1>
-  <details class="confirm">
-    <summary class="btn danger">Delete</summary>
-    <form method="post" action="{{ url_for('delete_maintenance', task_id=t.id) }}">
-      <p>Delete this maintenance task?</p>
-      <button class="btn danger">Yes, delete</button>
-    </form>
-  </details>
-</div>
+<a class="crumb" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">{{ icon('back') }}Maintenance · {{ pr.name }}</a>
+<header class="dhead">
+  <div>
+    <p class="eyebrow">Edit maintenance task · {{ pr.name }}</p>
+    <h1 class="dtitle">{{ t.name }}</h1>
+  </div>
+  <div class="actions">{{ ui.confirm("Delete", "Delete this maintenance task?", url_for('delete_maintenance', task_id=t.id)) }}</div>
+</header>
 <form class="form" method="post">
   <label class="wide">Name *<input name="name" value="{{ t.name }}" required></label>
   <label>Every … print hours<input name="interval_hours" inputmode="decimal" value="{{ '%g'|format(t.interval_hours) if t.interval_hours else '' }}"></label>
   <label>Every … days<input name="interval_days" inputmode="numeric" value="{{ t.interval_days or '' }}"></label>
   <label>Last done<input type="datetime-local" name="last_done_at" value="{{ t.last_done_at|localinput }}"></label>
   <label class="wide">Notes<input name="notes" value="{{ t.notes or '' }}"></label>
-  <p class="wide meta">Fill in print hours, days or both; the task becomes due at whichever is reached first.</p>
+  <p class="wide hint">Fill in print hours, days or both; the task becomes due at whichever is reached first.</p>
   <div class="actions wide">
-    <button class="btn primary">Save</button>
+    <button class="btn primary">{{ icon('check') }}<span>Save</span></button>
     <a class="btn ghost" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">Cancel</a>
   </div>
 </form>

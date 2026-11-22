@@ -3,6 +3,7 @@ using a real P2S report (anonymised) in tests/fixtures/p2s_report.json.
 """
 import copy
 import json
+import re
 import os
 import sys
 import tempfile
@@ -217,12 +218,13 @@ class AppTest(unittest.TestCase):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO prints (name, nozzle) VALUES ('four', 0.4), ('six', 0.6), ('none', NULL)")
         html = self.c.get("/").get_data(as_text=True)
-        self.assertIn('<option value="0.4"', html)
-        self.assertIn('<option value="0.6"', html)
+        self.assertIn('href="/?nozzle=0.4"', html)    # a chip per nozzle diameter
+        self.assertIn('href="/?nozzle=0.6"', html)
         html = self.c.get("/?nozzle=0.6").get_data(as_text=True)
         self.assertIn(">six<", html)
         self.assertNotIn(">four<", html)
-        self.assertIn('<option value="0.6" selected', html)
+        self.assertRegex(html, re.compile(r'<a class="chip"[^>]*aria-current="true"[^>]*>(?:(?!</a>).)*0\.6 mm', re.S))
+        self.assertIn('href="/?nozzle=0.4"', html)    # the other chip still switches to 0.4
 
     def test_form_saves_new_fields(self):
         self.c.post("/print/new", data={"name": "x", "nozzle": "0.4", "nozzle_type": "Hardened steel (HS01)",

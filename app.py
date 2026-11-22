@@ -17,6 +17,7 @@ from werkzeug.utils import secure_filename
 import bambu_errors
 import bambu_status
 import camera
+import icons
 import maintenance
 import notify
 import slicer
@@ -332,6 +333,9 @@ COVER_SQL = f"""COALESCE(
     (SELECT f.stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
        ORDER BY {THUMB_SQL}, f.id
        LIMIT 1))"""
+# Colours of the AMS slots a print used (comma-separated, may be NULL)
+AMS_COLORS_SQL = "(SELECT GROUP_CONCAT(a.tray_color) FROM print_ams a WHERE a.print_id = p.id) AS ams_colors"
+
 # Own cover: a chosen photo or a real photo. A thumbnail may be replaced by the camera image.
 OWN_COVER_SQL = f"""EXISTS (SELECT 1 FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
     AND (f.id = p.cover_file_id OR NOT {THUMB_SQL}))"""
@@ -410,9 +414,79 @@ def filesize(size):
 
 @app.context_processor
 def inject_lists():
-    printers = get_db().execute("SELECT id, name FROM printers ORDER BY name").fetchall()
+    db = get_db()
+    printers = db.execute("SELECT id, name FROM printers ORDER BY name").fetchall()
     return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
-            "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES, "labels": LABELS}
+            "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES, "labels": LABELS,
+            "status_icons": icons.STATUS_ICONS, "maintenance_due": maintenance_due_total(db, printers)}
+
+
+def maintenance_due_total(db, printers):
+    try:
+        return sum(t["st"]["due"] for pr in printers for t in maintenance.tasks_for_printer(db, pr["id"]))
+    except sqlite3.Error:
+        return 0
+
+
+app.add_template_global(icons.icon, "icon")
+app.add_template_global(icons.sprite, "icon_sprite")
+
+
+@app.template_global()
+def static_v(filename):
+    """Static URL with the file's modification time, so a new version is never served from the browser cache."""
+    try:
+        v = int(os.path.getmtime(os.path.join(app.static_folder, filename)))
+    except OSError:
+        v = 0
+    return url_for("static", filename=filename, v=v)
+
+
+HEX_COLOR = re.compile(r"^#?([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?$")
+NAMED_COLOR = re.compile(r"^[a-zA-Z]{3,20}$")
+
+
+def css_color(value):
+    """A colour that is safe inside a style attribute ('#rrggbb' or a plain colour word), else None."""
+    value = (value or "").strip()
+    m = HEX_COLOR.match(value)
+    if m:
+        return "#" + m.group(1).lower()
+    return value.lower() if NAMED_COLOR.match(value) else None
+
+
+app.add_template_filter(css_color, "css_color")
+
+
+@app.template_filter("swatches")
+def swatches(p):
+    """Filament colours of a print: the AMS slots used (if known), else the colour field. Duplicates removed."""
+    raw = (p["ams_colors"] or "").split(",") if "ams_colors" in p.keys() and p["ams_colors"] else []
+    if not raw and p["color"]:
+        raw = [p["color"]]
+    out = []
+    for c in raw:
+        c = css_color(c)
+        if c and c not in out:
+            out.append(c)
+    return out
+
+
+@app.template_global()
+def filter_url(key=None, value=None, **keep):
+    """URL of the overview with one filter switched on, or off when it is already on (chips).
+    key=None: clear all filters but keep the search term."""
+    args = {k: v for k, v in request.args.items() if v}
+    if key is None:
+        args = {"q": args["q"]} if args.get("q") else {}
+    elif args.get(key) == str(value):
+        args.pop(key)
+    else:
+        args[key] = str(value)
+    if args.get("status") != "failed":
+        args.pop("fail", None)
+    args.update({k: v for k, v in keep.items() if v})
+    return url_for("index", **args)
 
 
 @app.route("/")
@@ -424,7 +498,7 @@ def index():
     fail = request.args.get("fail", "")
     nozzle = num(request.args.get("nozzle"))
     sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own_cover,
-                    (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera
+                    (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera, {AMS_COLORS_SQL}
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
     if printer:
@@ -457,8 +531,23 @@ def index():
            FROM prints"""
     ).fetchone()
     nozzles = [r[0] for r in db.execute("SELECT DISTINCT nozzle FROM prints WHERE nozzle > 0 ORDER BY nozzle")]
+    counts = {
+        "status": dict(db.execute("SELECT status, COUNT(*) FROM prints GROUP BY status").fetchall()),
+        "material": dict(db.execute("SELECT material, COUNT(*) FROM prints WHERE material != '' GROUP BY material")
+                         .fetchall()),
+        "fail": dict(db.execute("SELECT fail_reason, COUNT(*) FROM prints WHERE status = 'failed' "
+                                "AND COALESCE(fail_reason, '') != '' GROUP BY fail_reason").fetchall()),
+    }
+    filtered = bool(q or material or status or printer or fail or nozzle)
+    # The two most recently finished prints, next to the live status (only on the unfiltered overview)
+    finished = [] if filtered else db.execute(
+        f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover, {AMS_COLORS_SQL}
+            FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id
+            WHERE p.status IN ('succeeded', 'failed')
+            ORDER BY COALESCE(p.finished_at, p.printed_on, p.created_at) DESC, p.id DESC LIMIT 2""").fetchall()
     return render_template("index.html", prints=prints, stats=stats, q=q, material=material, status=status,
-                           printer=printer, fail=fail, nozzle=nozzle, nozzles=nozzles)
+                           printer=printer, fail=fail, nozzle=nozzle, nozzles=nozzles, counts=counts,
+                           filtered=filtered, finished=finished)
 
 
 @app.route("/print/new", methods=["GET", "POST"])
@@ -1224,6 +1313,31 @@ def enrich_from_makerworld(db, print_id, old, data):
     if cover and not has_cover:
         save_makerworld_cover(db, print_id, cover)
     return ("MakerWorld data filled in" + (" (with image)." if cover and not has_cover else "."), "ok")
+
+
+@app.route("/maintenance")
+def maintenance_overview():
+    """Sidebar link: the maintenance page of the only printer, else the printer list."""
+    rows = get_db().execute("SELECT id FROM printers ORDER BY name").fetchall()
+    if len(rows) == 1:
+        return redirect(url_for("printer_maintenance", printer_id=rows[0]["id"]))
+    return redirect(url_for("printers"))
+
+
+ERRORS = {400: ("Bad request", "The request was not understood."),
+          404: ("Not found", "This page or file does not exist (any more)."),
+          405: ("Not allowed", "This address does not accept this kind of request."),
+          500: ("Something went wrong", "An unexpected error occurred. It has been logged; try again in a moment.")}
+
+
+def error_page(e):
+    code = getattr(e, "code", 500) or 500
+    title, text = ERRORS.get(code, ERRORS[500])
+    return render_template("error.html", code=code, title=title, text=text), code
+
+
+for _code in (400, 404, 405, 500):
+    app.register_error_handler(_code, error_page)
 
 
 @app.errorhandler(413)

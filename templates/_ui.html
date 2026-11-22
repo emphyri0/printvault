@@ -1,0 +1,49 @@
+{# Shared pieces. Import with: {% import "_ui.html" as ui with context %} #}
+
+{% macro badge(status, extra="", cls="") -%}
+<span class="badge st-{{ status }}{{ ' ' ~ cls if cls }}">{{ icon(status_icons.get(status, 'help'), 'bico') }}{{ status|label }}{{ extra }}</span>
+{%- endmacro %}
+
+{% macro swatches(p, limit=4) -%}
+{% set cols = p|swatches %}{% if cols %}
+<span class="swatches" role="img" aria-label="Filament colour{{ 's' if cols|length > 1 }}: {{ cols|join(', ') }}" title="{{ cols|join(', ') }}">
+  {%- for c in cols[:limit] %}<i class="sw" style="background:{{ c }}"></i>{% endfor %}
+  {%- if cols|length > limit %}<span class="more num">+{{ cols|length - limit }}</span>{% endif %}</span>
+{%- endif %}
+{%- endmacro %}
+
+{% macro noimg(text="No photo") -%}
+<div class="noimg">{{ icon('image') }}<span>{{ text }}</span></div>
+{%- endmacro %}
+
+{% macro card(p) -%}
+<a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
+  <div class="media">
+    {% if p.status == 'printing' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
+      data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ thumb_url(p.cover) }}"{% endif %}
+      alt="Camera image of the printer" loading="lazy"><span class="livetag snaptag">{{ icon('camera', 'bico') }}<span class="t">Live</span></span>
+    {% elif p.cover %}<img src="{{ thumb_url(p.cover) }}" alt="" loading="lazy">
+    {% else %}{{ noimg() }}{% endif %}
+    {{ badge(p.status, (" · " ~ p.fail_reason|label) if p.status == 'failed' and p.fail_reason else "") }}
+  </div>
+  <div class="cbody">
+    <h3 class="ctitle">{{ p.name }}</h3>
+    <div class="meta">
+      {% if p.printer_name %}<span class="m pr">{{ icon('printer') }}<span class="sr">Printer: </span>{{ p.printer_name }}</span>{% endif %}
+      <span class="m num">{{ icon('clock') }}<span class="sr">Print time: </span>{{ p.print_time_min|duration }}</span>
+      {% if p.filament_g %}<span class="m num">{{ icon('weight') }}<span class="sr">Filament: </span>{{ "%g"|format(p.filament_g) }} g</span>{% endif %}
+      {{ swatches(p) }}
+    </div>
+  </div>
+</a>
+{%- endmacro %}
+
+{% macro confirm(label, question, action, button="Yes, delete", cls="btn danger") -%}
+<details class="confirm">
+  <summary class="{{ cls }}">{{ icon('trash') }}<span>{{ label }}</span></summary>
+  <form class="pop" method="post" action="{{ action }}">
+    <p>{{ question }}</p>
+    <button class="btn danger solid">{{ button }}</button>
+  </form>
+</details>
+{%- endmacro %}

@@ -349,8 +349,9 @@ class PagesTest(unittest.TestCase):
         self.assertEqual((t["interval_days"], t["interval_hours"]), (1, None))
         self.assertTrue(t["last_done_at"].startswith("2026-01-01T10:00:00+01:00"))
         html = self.c.get("/printers").get_data(as_text=True)
-        self.assertIn('Maintenance <span class="badge failed">1</span>', html)
-        self.assertIn(">due<", self.c.get(f"/printers/{self.pid}/maintenance").get_data(as_text=True))
+        self.assertIn("</svg>1 due</span>", html)                                    # on the printer card
+        self.assertIn('<span class="navbadge num">1<span class="sr"> due</span>', html)  # in the navigation
+        self.assertIn("</svg>Due</span>", self.c.get(f"/printers/{self.pid}/maintenance").get_data(as_text=True))
         # without an interval: refused
         self.c.post(f"/printers/{self.pid}/maintenance", data={"name": "Empty"})
         with db_conn() as db:

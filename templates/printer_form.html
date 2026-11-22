@@ -1,40 +1,38 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
 {% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault{% endblock %}
 {% block content %}
-<div class="head">
-  <h1>{{ "Edit " ~ pr.name if pr.id else "New printer" }}</h1>
-  {% if pr.id %}
-  <details class="confirm">
-    <summary class="btn danger">Delete</summary>
-    <form method="post" action="{{ url_for('delete_printer', printer_id=pr.id) }}">
-      <p>Delete this printer? Its prints are kept, just without a printer.</p>
-      <button class="btn danger">Yes, delete</button>
-    </form>
-  </details>
-  {% endif %}
-</div>
+<a class="crumb" href="{{ url_for('printers') }}">{{ icon('back') }}Printers</a>
+<header class="dhead">
+  <div>
+    <p class="eyebrow">{{ "Edit printer" if pr.id else "New printer" }}</p>
+    <h1 class="dtitle">{{ pr.name if pr.id else "Add a printer" }}</h1>
+  </div>
+  {% if pr.id %}<div class="actions">{{ ui.confirm("Delete", "Delete this printer? Its prints are kept, just without a printer.", url_for('delete_printer', printer_id=pr.id)) }}</div>{% endif %}
+</header>
 <form class="form" method="post" enctype="multipart/form-data">
-  <label>Name *<input name="name" value="{{ pr.name or '' }}" required autofocus placeholder="e.g. Bambu"></label>
-  <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="e.g. Bambu Lab P2S + AMS 2 Pro"></label>
+  <label>Name *<input name="name" value="{{ pr.name or '' }}" required {% if not pr.id %}autofocus{% endif %} placeholder="e.g. Workshop printer"></label>
+  <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="e.g. P2S + AMS 2 Pro"></label>
   <label class="wide">Notes<textarea name="notes" rows="4" placeholder="Nozzles, purchase date, serial number, upgrades…">{{ pr.notes or '' }}</textarea></label>
-  <fieldset class="wide mqtt">
-    <legend>Live connection (Bambu Lab, read-only)</legend>
+  <fieldset class="wide">
+    <legend>{{ icon('link') }}Live connection (Bambu Lab, read-only)</legend>
     <p class="hint">Printvault listens in via MQTT and keeps track of prints automatically. Nothing is sent to the printer; cloud mode can stay on. You find the IP and access code on the printer under Settings → Network/WLAN.</p>
     <label>IP address<input name="ip" value="{{ pr.ip or '' }}" placeholder="e.g. 192.0.2.10" inputmode="decimal" autocomplete="off"></label>
     <label>Serial number<input name="serial" value="{{ pr.serial or '' }}" placeholder="e.g. 00M00A000000000" autocomplete="off"></label>
     <label>Access code<input type="password" name="access_code" value="" autocomplete="new-password"
       placeholder="{{ 'set, leave empty to keep' if pr.has_access_code else '8 characters' }}"></label>
-    <span class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live connection on</span>
+    <label class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live connection on</label>
   </fieldset>
-  <label class="wide">Photo
+  <fieldset class="wide">
+    <legend>{{ icon('image') }}Photo</legend>
     {% if pr.photo %}
-    <img class="preview" src="{{ thumb_url(pr.photo) }}" alt="">
-    <span class="check"><input type="checkbox" name="remove_photo" value="1"> Remove current photo</span>
+    <img class="preview" src="{{ thumb_url(pr.photo) }}" alt="Current photo of the printer">
+    <label class="check"><input type="checkbox" name="remove_photo" value="1"> Remove current photo</label>
     {% endif %}
-    <input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,.gif">
-  </label>
+    <label>{{ "Replace photo" if pr.photo else "Choose a photo" }}<input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,.gif"></label>
+  </fieldset>
   <div class="actions wide">
-    <button class="btn primary">Save</button>
+    <button class="btn primary">{{ icon('check') }}<span>Save</span></button>
     <a class="btn ghost" href="{{ url_for('printers') }}">Cancel</a>
   </div>
 </form>

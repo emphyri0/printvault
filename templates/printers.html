@@ -1,34 +1,45 @@
 {% extends "base.html" %}
 {% block title %}Printers · Printvault{% endblock %}
 {% block content %}
-<div class="head">
-  <h1>Printers</h1>
-  <a class="btn" href="{{ url_for('new_printer') }}">+ Add printer</a>
-</div>
+<header class="dhead">
+  <div><h1 class="dtitle">Printers</h1></div>
+  <div class="actions"><a class="btn primary" href="{{ url_for('new_printer') }}">{{ icon('plus') }}<span>Add printer</span></a></div>
+</header>
 {% if printers %}
 <div class="grid printers">
   {% for pr in printers %}
-  <div class="card">
-    <div class="thumb">
-      {% if pr.photo %}<img src="{{ thumb_url(pr.photo) }}" alt="{{ pr.name }}" loading="lazy">
-      {% else %}<div class="nothumb">no photo</div>{% endif %}
+  <article class="card" aria-labelledby="printer-{{ pr.id }}">
+    <div class="media">
+      {% if pr.photo %}<img src="{{ thumb_url(pr.photo) }}" alt="" loading="lazy">
+      {% else %}<div class="noimg">{{ icon('printer') }}<span>No photo</span></div>{% endif %}
+      {% if pr.mqtt_enabled and pr.ip and pr.serial and pr.access_code %}<span class="badge st-printing">{{ icon('check', 'bico') }}Live connection</span>{% endif %}
     </div>
-    <div class="body">
-      <h3>{{ pr.name }}</h3>
+    <div class="cbody">
+      <h2 id="printer-{{ pr.id }}">{{ pr.name }}</h2>
       {% if pr.model %}<p class="meta">{{ pr.model }}</p>{% endif %}
-      <p class="meta">{{ pr.n }} prints · {{ pr.ok or 0 }} succeeded · {{ "%.2f"|format(pr.grams / 1000) }} kg · {{ pr.minutes|duration }}</p>
+      <div class="pstats">
+        <div><span class="sv num">{{ pr.n }}</span><span class="sl">prints</span></div>
+        <div><span class="sv num">{{ pr.ok or 0 }}</span><span class="sl">succeeded</span></div>
+        <div><span class="sv num">{{ "%.2f"|format(pr.grams / 1000) }} kg</span><span class="sl">filament</span></div>
+        <div><span class="sv num">{{ pr.minutes|duration }}</span><span class="sl">print time</span></div>
+      </div>
       {% if pr.notes %}<p class="pnotes">{{ pr.notes }}</p>{% endif %}
       <div class="actions">
-        <a class="btn" href="{{ url_for('index', printer=pr.id) }}">Prints</a>
-        <a class="btn" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">Maintenance{% if due[pr.id] %} <span class="badge failed">{{ due[pr.id] }}</span>{% endif %}</a>
-        {% if pr.ip and pr.access_code %}<a class="btn" href="{{ url_for('camera_stream', printer_id=pr.id) }}" target="_blank" rel="noopener">📷 Camera</a>{% endif %}
-        <a class="btn ghost" href="{{ url_for('edit_printer', printer_id=pr.id) }}">Edit</a>
+        <a class="btn small" href="{{ url_for('index', printer=pr.id) }}">{{ icon('grid') }}<span>Prints</span></a>
+        <a class="btn small" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">{{ icon('wrench') }}<span>Maintenance</span>{% if due[pr.id] %} <span class="duebadge">{{ icon('alert', 'bico') }}{{ due[pr.id] }} due</span>{% endif %}</a>
+        {% if pr.ip and pr.access_code %}<a class="btn small" href="{{ url_for('camera_stream', printer_id=pr.id) }}" target="_blank" rel="noopener">{{ icon('video') }}<span>Camera</span></a>{% endif %}
+        <a class="btn small ghost" href="{{ url_for('edit_printer', printer_id=pr.id) }}">{{ icon('edit') }}<span>Edit</span></a>
       </div>
     </div>
-  </div>
+  </article>
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">No printers yet. <a href="{{ url_for('new_printer') }}">Add your first printer.</a></p>
+<div class="empty">
+  {{ icon('printer') }}
+  <h2>No printers yet</h2>
+  <p>Add your printer to link prints to it. With a Bambu Lab printer, Printvault can also follow prints live (read-only).</p>
+  <div class="actions"><a class="btn primary" href="{{ url_for('new_printer') }}">{{ icon('plus') }}<span>Add your first printer</span></a></div>
+</div>
 {% endif %}
 {% endblock %}

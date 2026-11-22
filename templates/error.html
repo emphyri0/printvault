@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Printvault{% endblock %}
+{% block content %}
+<section class="errorpage">
+  <span class="code" aria-hidden="true">{{ code }}</span>
+  <h1>{{ title }}</h1>
+  <p>{{ text }}</p>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('index') }}">{{ icon('grid') }}<span>All prints</span></a>
+    <button class="btn ghost" type="button" onclick="history.back()">{{ icon('back') }}<span>Go back</span></button>
+  </div>
+</section>
+{% endblock %}

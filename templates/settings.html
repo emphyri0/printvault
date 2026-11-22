@@ -1,28 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Settings · Printvault{% endblock %}
 {% block content %}
-<div class="head"><h1>Settings</h1></div>
+<header class="dhead"><div><h1 class="dtitle">Settings</h1></div></header>
 <form class="form" method="post">
-  <fieldset class="wide mqtt">
-    <legend>Notifications via ntfy</legend>
+  <fieldset class="wide">
+    <legend>{{ icon('bell') }}Notifications via ntfy</legend>
     <p class="hint">Install the ntfy app and subscribe to the same topic. On the public ntfy.sh server anyone who knows the topic can read along: pick a long, hard-to-guess topic or use your own server with a token.</p>
     <label>Server URL<input name="ntfy_url" value="{{ cfg.ntfy_url or '' }}" placeholder="https://ntfy.sh" autocomplete="off"></label>
     <label>Topic<input name="ntfy_topic" value="{{ cfg.ntfy_topic or '' }}" placeholder="e.g. printvault-x7k2m9" autocomplete="off"></label>
     <label>Access token (optional)<input type="password" name="ntfy_token" value="" autocomplete="new-password"
       placeholder="{{ 'set, leave empty to keep' if cfg.has_token else 'tk_…' }}"></label>
-    {% if cfg.has_token %}<span class="check"><input type="checkbox" name="clear_token" value="1"> Clear token</span>{% endif %}
+    {% if cfg.has_token %}<label class="check"><input type="checkbox" name="clear_token" value="1"> Clear token</label>{% endif %}
   </fieldset>
-  <fieldset class="wide mqtt">
-    <legend>When?</legend>
-    <span class="check"><input type="checkbox" name="notify_finish" value="1" {% if cfg.notify_finish == '1' %}checked{% endif %}> Print finished</span>
-    <span class="check"><input type="checkbox" name="notify_failed" value="1" {% if cfg.notify_failed == '1' %}checked{% endif %}> Print failed (with the error code as text)</span>
-    <span class="check"><input type="checkbox" name="notify_maintenance" value="1" {% if cfg.notify_maintenance == '1' %}checked{% endif %}> Maintenance due</span>
+  <fieldset class="wide">
+    <legend>{{ icon('send') }}When?</legend>
+    <div class="checks wide">
+      <label class="check"><input type="checkbox" name="notify_finish" value="1" {% if cfg.notify_finish == '1' %}checked{% endif %}> Print finished</label>
+      <label class="check"><input type="checkbox" name="notify_failed" value="1" {% if cfg.notify_failed == '1' %}checked{% endif %}> Print failed (with the error code as text)</label>
+      <label class="check"><input type="checkbox" name="notify_maintenance" value="1" {% if cfg.notify_maintenance == '1' %}checked{% endif %}> Maintenance due</label>
+    </div>
   </fieldset>
   <div class="actions wide">
-    <button class="btn primary">Save</button>
+    <button class="btn primary">{{ icon('check') }}<span>Save</span></button>
+    <button class="btn" form="testsend" {% if not (cfg.ntfy_url and cfg.ntfy_topic) %}disabled title="Save a URL and topic first"{% endif %}>{{ icon('send') }}<span>Send test notification</span></button>
   </div>
 </form>
-<form method="post" action="{{ url_for('settings_test') }}" class="testsend">
-  <button class="btn" {% if not (cfg.ntfy_url and cfg.ntfy_topic) %}disabled title="Save a URL and topic first"{% endif %}>Send test notification</button>
-</form>
+<form id="testsend" method="post" action="{{ url_for('settings_test') }}"></form>
 {% endblock %}

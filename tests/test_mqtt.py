@@ -3,6 +3,7 @@
 Run:  python3 -m unittest discover -s tests
 """
 import json
+import re
 import os
 import sqlite3
 import sys
@@ -21,6 +22,11 @@ import bambu_errors as be  # noqa: E402
 
 TZ = ZoneInfo("Europe/Brussels")
 
+
+
+def active_chip(text):
+    """Regex for a filter chip that is switched on and contains `text`."""
+    return re.compile(r'<a class="chip"[^>]*aria-current="true"[^>]*>(?:(?!</a>).)*' + re.escape(text), re.S)
 
 class Clock:
     def __init__(self):
@@ -284,7 +290,7 @@ class AppTest(unittest.TestCase):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO prints (name, status) VALUES ('a', 'unknown'), ('b', 'succeeded')")
         html = self.c.get("/?status=unknown").get_data(as_text=True)
-        self.assertIn('<option value="unknown" selected>Unknown</option>', html)
+        self.assertRegex(html, active_chip("Unknown"))   # the status chip is shown as active
         self.assertIn(">a<", html)
         self.assertNotIn(">b<", html)
         self.assertIn("unknown", app.STATUSES)

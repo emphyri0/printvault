@@ -7,14 +7,15 @@ A small web app to keep track of your 3D prints: photos, model files (3mf, stl, 
 - Prints with photos, model files (3mf, stl, step, obj, gcode), filament, print time, settings and notes
 - Printers with a photo, and per print which printer made it
 - Import from MakerWorld: paste a model link and the title, designer, cover, filament, weight and print time are filled in (you add the 3mf file yourself)
-- Live connection with Bambu Lab printers via MQTT (read-only, cloud mode can stay on): prints are created and closed automatically, with AMS slots, and the home page shows a live status card
+- Live connection with Bambu Lab printers via MQTT (read-only, cloud mode can stay on): prints are created and closed automatically, with AMS slots, and the home page shows the running print large at the top
 - Error codes (print_error and HMS) as readable text, with a suggested fail reason for failed prints
-- AMS humidity and temperature per unit, with the last 24 hours on the status card
+- AMS humidity and temperature per unit, with the last 24 hours in the live block
 - Maintenance tasks per printer with an interval in print hours and/or days
 - Notifications via ntfy: print finished, print failed, maintenance due (each can be switched on/off)
-- Live status card like the printer screen: stage, progress, finish time, temperatures, speed, fans and active AMS slot
+- Live status like the printer screen: stage, progress, finish time, temperatures, speed, fans and active AMS slot
+- Overview with search and filter chips (status, fail reason, material, nozzle, printer), dark theme, works on a phone
 - Temperature and stage history per print as a chart on the detail page
-- Live camera image of the printer on the status card, and an automatic camera photo on the print when it finishes or fails
+- Live camera image of the printer at the top of the home page, and an automatic camera photo on the print when it finishes or fails
 
 ## Values and labels
 
@@ -44,16 +45,16 @@ Under **Printers → Edit**, fill in the IP address, serial number and access co
 
 Printers with an IP address and access code (X1, P2S, H2D: RTSPS on port 322) get a camera image. *LAN live view* must be enabled on the printer.
 
-- On the status card: the **📷 Camera** button; under **Printers** a link that opens the image in a new tab.
+- At the top of the home page: the **Live video** button on the camera image (and a button to open it in a new tab); under **Printers** the **Camera** link.
 - `/printers/<id>/camera.mjpg`: live image as MJPEG (± 5 fps, max. 1280 wide; adjustable with `CAMERA_FPS` and `CAMERA_WIDTH`). ffmpeg in the container converts the stream. There is one connection per printer, shared by all viewers. It stops 15 seconds after the last viewer leaves; a hidden tab also stops the stream.
 - `/printers/<id>/snapshot.jpg`: a single image in full resolution. The image is kept ~20 s per printer (a failed attempt too), so several tabs do not put extra load on the printer; when the live stream is running, the image comes from there.
 - On the home page, the card of a print with status *Printing* without an own cover (a thumbnail does not count; it is the fallback when there is no camera image) shows the camera image (label *live*), refreshed every 30 s. When the listener reports that the print is no longer running, one last image follows (label *end*); after a reload the card shows the end photo the listener attached to the print.
 - When a print goes live to *Succeeded* or *Failed*, the listener attaches a camera photo (`camera-succeeded-…jpg` / `camera-failed-…jpg`). A cover you chose or an own photo added earlier stays the cover; a slicer/MakerWorld thumbnail is replaced by the camera photo (the thumbnail stays among the photos). If the image fails, that is logged and everything else carries on. An end the listener only notices after a restart gets no photo.
 - The access code never ends up in logs or error messages.
 
-## Status card and time series
+## Live status and time series
 
-- The status card shows what the printer screen shows: the stage as readable text (`stg_cur`), plate x of y, %, layer, time left and finish time, nozzle/bed/chamber temperature (current/target; the P2S has no chamber target), speed profile, fans (part, aux, chamber, heatbreak) and the active AMS slot with its colour. On the left is the camera image (when the print has no own cover), otherwise the cover or the printer photo.
+- The live block at the top of the home page shows what the printer screen shows: the stage as readable text (`stg_cur`), plate x of y, %, layer, time left and finish time, nozzle/bed/chamber temperature (current/target; the P2S has no chamber target), speed profile, fans (part, aux, chamber, heatbreak) and the active AMS slot with its colour. The large image is the camera image (when the print has no own cover), otherwise the cover or the printer photo; the last two finished prints are next to it. A printer that is not printing gets a compact bar with its temperatures and AMS.
 - Fields that are missing (other model, older firmware) simply drop out. The translation of the raw fields is in `bambu_status.py`.
 - At the start of a print the listener fills in the print record: nozzle diameter, nozzle type (e.g. *Hardened steel (HS01)*), plate (`device.plate.cur_id`, e.g. `P0101`; the source has no readable name for it), plate number and number of plates, speed profile, and whether spaghetti detection and first layer inspection were on. Only fields that are still empty; what you filled in yourself (or what came from a 3mf) stays. If the full report only arrives later, the empty fields are filled in then.
 - Time series: per print at most one data point per minute (temperatures, stage, %, layer) in `print_samples`, plus one at every stage change and at the end. Shown on the detail page as a chart with a stage band, crosshair and table.
@@ -87,6 +88,16 @@ docker compose up -d --build
 ```
 
 The app then runs at http://<vm-ip>:8100. It is also reachable via Tailscale.
+
+## Design
+
+Plain HTML, CSS and JavaScript: no framework, no build step, no requests to other sites.
+
+- `static/style.css`: the whole look (dark theme, colours as variables at the top). `static/app.js`: shared helpers and the printer status in the sidebar. `static/live.js`: live status on the home and detail page. `static/chart.js`: the temperature chart.
+- Icons: own inline SVG in `icons.py`, included once per page as a sprite (`{{ icon("clock") }}` in templates, `PV.icon("clock")` in JavaScript).
+- Fonts: Inter and JetBrains Mono (numbers), self-hosted in `static/fonts/` (SIL OFL 1.1, licences next to them).
+- Accessibility: a status is always an icon plus a word, never colour alone; visible focus; text contrast at least 4.5:1 and form field borders at least 3:1 on their background; the chart colours are checked for colour blindness and come with direct labels and a table.
+- On a phone (≤ 760 px) the sidebar becomes a bar at the bottom and the overview shows two columns.
 
 ## Photos and thumbnails
 

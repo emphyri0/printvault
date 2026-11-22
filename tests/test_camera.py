@@ -313,7 +313,7 @@ class CameraRoutesTest(unittest.TestCase):
         self.assertIn('src="/thumb/600/f.jpg"', html)                              # an own photo stays
         self.assertIn('data-printer="1" data-print="1"', html)
         self.assertIn("/printers/1/snapshot.jpg", html)
-        self.assertEqual(html.count('<div class="nothumb">no photo</div>'), 2)   # done + no camera
+        self.assertEqual(html.count('<span>No photo</span>'), 2)                   # done + no camera
         self.assertNotIn(CODE, html)
 
     def test_snapshot_error_redacted(self):

@@ -1,45 +1,54 @@
 {% extends "base.html" %}
 {% block title %}Maintenance {{ pr.name }} · Printvault{% endblock %}
 {% block content %}
-<div class="head">
+<a class="crumb" href="{{ url_for('printers') }}">{{ icon('back') }}Printers</a>
+<header class="dhead">
   <div>
-    <h1>Maintenance · {{ pr.name }}</h1>
-    <p class="sub">Print hours count from the last time a task was done. A task that becomes due sends one ntfy notification (see <a href="{{ url_for('settings') }}">Settings</a>).</p>
+    <p class="eyebrow">{{ pr.name }}</p>
+    <h1 class="dtitle">Maintenance</h1>
+    <p class="sub">Print hours count from the last time a task was done. A task that becomes due sends one ntfy notification (see <a class="link" href="{{ url_for('settings') }}">Settings</a>).</p>
   </div>
-  <a class="btn ghost" href="{{ url_for('printers') }}">Back</a>
-</div>
+</header>
 
 {% if tasks %}
 <ul class="tasks">
-  {% for t in tasks %}
+  {% for t in tasks %}{% set pct = (t.st.progress * 100)|round(0)|int %}
   <li class="task{% if t.st.due %} due{% endif %}">
-    <div class="taskmain">
-      <strong>{{ t.name }}</strong>{% if t.st.due %} <span class="badge failed">due</span>{% endif %}
-      <div class="bar"><span style="width: {{ (t.st.progress * 100)|round(0) }}%"></span></div>
-      <p class="meta">{{ t.summary }} · last done {{ t.last_done_at|clock }}</p>
+    <div>
+      <div class="tname"><strong>{{ t.name }}</strong>
+        {% if t.st.due %}<span class="badge flat st-failed">{{ icon('alert', 'bico') }}Due</span>
+        {% elif pct >= 80 %}<span class="badge flat st-reprint">{{ icon('clock', 'bico') }}Soon</span>
+        {% else %}<span class="badge flat st-succeeded">{{ icon('check', 'bico') }}OK</span>{% endif %}</div>
+      <div class="bar{{ ' warn' if pct >= 80 and not t.st.due }}" role="progressbar" aria-label="{{ t.name }}: share of the interval used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ [pct, 100]|min }}"><span style="width: {{ [pct, 100]|min }}%"></span></div>
+      <p class="meta"><span class="num">{{ t.summary }}</span><span>last done <span class="num">{{ t.last_done_at|clock }}</span></span></p>
       {% if t.notes %}<p class="meta">{{ t.notes }}</p>{% endif %}
     </div>
     <div class="actions">
-      <form method="post" action="{{ url_for('done_maintenance', task_id=t.id) }}"><button class="btn primary">Done</button></form>
-      <a class="btn ghost" href="{{ url_for('edit_maintenance', task_id=t.id) }}">Edit</a>
+      <form method="post" action="{{ url_for('done_maintenance', task_id=t.id) }}"><button class="btn small" title="Mark as done now">{{ icon('check') }}<span>Done</span></button></form>
+      <a class="btn small ghost" href="{{ url_for('edit_maintenance', task_id=t.id) }}">{{ icon('edit') }}<span>Edit</span></a>
     </div>
   </li>
   {% endfor %}
 </ul>
 {% else %}
-<p class="empty">No maintenance tasks yet.</p>
-<form method="post" action="{{ url_for('seed_maintenance', printer_id=pr.id) }}">
-  <button class="btn">Add default tasks (P2S)</button>
-</form>
+<div class="empty">
+  {{ icon('wrench') }}
+  <h2>No maintenance tasks yet</h2>
+  <p>Start with a set of default tasks for the P2S and adjust the intervals, or add your own below.</p>
+  <form class="actions" method="post" action="{{ url_for('seed_maintenance', printer_id=pr.id) }}">
+    <button class="btn primary">{{ icon('plus') }}<span>Add default tasks (P2S)</span></button>
+  </form>
+</div>
 {% endif %}
 
-<h2>Add task</h2>
+<div class="sectionhead"><h2>Add task</h2></div>
 <form class="form" method="post">
   <label class="wide">Name *<input name="name" required placeholder="e.g. Check belt tension"></label>
   <label>Every … print hours<input name="interval_hours" inputmode="decimal" placeholder="e.g. 200"></label>
   <label>Every … days<input name="interval_days" inputmode="numeric" placeholder="e.g. 90"></label>
   <label>Last done<input type="datetime-local" name="last_done_at" value="{{ now }}"></label>
   <label class="wide">Notes<input name="notes" placeholder="e.g. which grease, link to the manual"></label>
-  <div class="actions wide"><button class="btn primary">Add</button></div>
+  <p class="wide hint">Fill in print hours, days or both; the task becomes due at whichever is reached first.</p>
+  <div class="actions wide"><button class="btn primary">{{ icon('plus') }}<span>Add</span></button></div>
 </form>
 {% endblock %}

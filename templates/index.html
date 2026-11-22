@@ -1,371 +1,95 @@
 {% extends "base.html" %}
+{% import "_ui.html" as ui with context %}
+{% block title %}{{ "Search: " ~ q ~ " · " if q }}Printvault{% endblock %}
 {% block content %}
-<section id="live" class="live" hidden aria-live="polite"></section>
-<section class="stats">
-  <div><span>{{ stats.n }}</span>prints</div>
-  <div><span>{{ stats.ok or 0 }}</span>succeeded</div>
-  <div><span>{{ stats.failed or 0 }}</span>failed</div>
-  <div><span>{{ "%.2f"|format(stats.grams / 1000) }} kg</span>filament</div>
-  <div><span>{{ stats.minutes|duration }}</span>print time</div>
+{% if not filtered and (all_printers or finished) %}
+<section class="hero" aria-label="Printers and last finished prints">
+  <div class="hlive" id="live" hidden></div>
+  <div class="hcol">
+    <div class="hstats" id="hstats" hidden></div>
+    {% for p in finished %}
+    <a class="fin" href="{{ url_for('show_print', print_id=p.id) }}">
+      <div class="fmedia">{% if p.cover %}<img src="{{ thumb_url(p.cover) }}" alt="" loading="lazy">{% else %}{{ ui.noimg("") }}{% endif %}</div>
+      <div class="fbody">
+        <p class="eyebrow">{{ "Last finished" if loop.first else "Before that" }}</p>
+        {{ ui.badge(p.status) }}
+        <h3 class="ctitle">{{ p.name }}</h3>
+        <div class="meta">
+          <span class="m num">{{ icon('clock') }}<span class="sr">Print time: </span>{{ p.print_time_min|duration }}</span>
+          <span class="m num">{{ icon('calendar') }}<span class="sr">Finished: </span>{{ (p.finished_at or p.printed_on)|day if (p.finished_at or p.printed_on) else "–" }}</span>
+          {{ ui.swatches(p) }}
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
 </section>
+{% endif %}
 
-<form class="filters" method="get">
-  <input type="search" name="q" value="{{ q }}" placeholder="Search name, tag, note…">
-  <select name="material">
-    <option value="">All materials</option>
-    {% for m in materials %}<option {% if m == material %}selected{% endif %}>{{ m }}</option>{% endfor %}
-  </select>
-  {% if all_printers %}
-  <select name="printer">
-    <option value="">All printers</option>
-    {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == printer %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
-  </select>
+<div class="sectionhead">
+  <h2>{% if q %}Results for “{{ q }}”{% elif filtered %}Filtered prints{% else %}All prints{% endif %}</h2>
+  <span class="summary num">{{ prints|length }} of {{ stats.n }} prints · {{ "%.2f"|format(stats.grams / 1000) }} kg · {{ stats.minutes|duration }} printed</span>
+</div>
+
+{% macro chip(key, value, text, n=None, ic=None) -%}
+{% set on = request.args.get(key) == value|string %}
+<a class="chip"{% if ic %} style="--c:var(--{{ {'printing': 'live', 'succeeded': 'ok', 'failed': 'bad', 'planned': 'info', 'reprint': 'warn'}.get(value, 'muted') }})"{% endif %} href="{{ filter_url(key, value) }}"{% if on %} aria-current="true" title="Remove this filter"{% endif %}>
+  {%- if ic %}{{ icon(ic, 'cico') }}{% endif %}{{ text }}{% if n is not none %} <span class="n">{{ n }}</span>{% endif %}{% if on %}{{ icon('x', 'cico off') }}<span class="sr"> (active, select to remove)</span>{% endif %}</a>
+{%- endmacro %}
+<nav class="filters" aria-label="Filters">
+  <div class="chips">
+    <span class="lbl" id="f-status">Status</span>
+    <a class="chip" href="{{ filter_url() }}"{% if not (material or status or printer or fail or nozzle) %} aria-current="true"{% endif %}>All <span class="n">{{ stats.n }}</span></a>
+    {% for s in statuses if counts.status.get(s) or status == s %}{{ chip('status', s, s|label, counts.status.get(s, 0), status_icons[s]) }}{% endfor %}
+  </div>
+  {% if status == 'failed' and counts.fail %}
+  <div class="chips">
+    <span class="lbl">Reason</span>
+    {% for r in fail_reasons if counts.fail.get(r) or fail == r %}{{ chip('fail', r, r|label, counts.fail.get(r, 0)) }}{% endfor %}
+  </div>
   {% endif %}
-  <select name="status">
-    <option value="">All statuses</option>
-    {% for s in statuses %}<option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s|label }}</option>{% endfor %}
-  </select>
-  <select name="fail">
-    <option value="">All fail reasons</option>
-    {% for r in fail_reasons %}<option value="{{ r }}" {% if r == fail %}selected{% endif %}>{{ r|label }}</option>{% endfor %}
-  </select>
-  {% if nozzles %}
-  <select name="nozzle">
-    <option value="">All nozzles</option>
-    {% for n in nozzles %}<option value="{{ '%g'|format(n) }}" {% if nozzle and (n - nozzle)|abs < 0.001 %}selected{% endif %}>{{ '%g'|format(n) }} mm</option>{% endfor %}
-  </select>
+  {% if counts.material or material %}
+  <div class="chips">
+    <span class="lbl">Material</span>
+    {% for m in materials if counts.material.get(m) or material == m %}{{ chip('material', m, m, counts.material.get(m, 0)) }}{% endfor %}
+    {% for m, n in counts.material.items() if m not in materials %}{{ chip('material', m, m, n) }}{% endfor %}
+  </div>
   {% endif %}
-  <button class="btn">Filter</button>
-  {% if q or material or status or printer or fail or nozzle %}<a class="btn ghost" href="{{ url_for('index') }}">Clear</a>{% endif %}
-</form>
+  {% if nozzles|length > 1 or nozzle %}
+  <div class="chips">
+    <span class="lbl">Nozzle</span>
+    {% for n in nozzles %}{{ chip('nozzle', '%g'|format(n), '%g mm'|format(n)) }}{% endfor %}
+  </div>
+  {% endif %}
+  {% if all_printers|length > 1 or printer %}
+  <div class="chips">
+    <span class="lbl">Printer</span>
+    {% for pr in all_printers %}{{ chip('printer', pr.id, pr.name, None, 'printer') }}{% endfor %}
+  </div>
+  {% endif %}
+</nav>
 
 {% if prints %}
 <div class="grid">
-  {% for p in prints %}
-  <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
-    <div class="thumb">
-      {% if p.status == 'printing' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
-        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ thumb_url(p.cover) }}"{% endif %}
-        alt="Camera image of the printer" loading="lazy"><span class="snaptag">live</span>
-      {% elif p.cover %}<img src="{{ thumb_url(p.cover) }}" alt="" loading="lazy">
-      {% else %}<div class="nothumb">no photo</div>{% endif %}
-      <span class="badge {{ p.status }}">{{ p.status|label }}{% if p.status == 'failed' and p.fail_reason %} · {{ p.fail_reason|label }}{% endif %}</span>
-    </div>
-    <div class="body">
-      <h3>{{ p.name }}</h3>
-      <p class="meta">
-        {% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}
-        {{ p.material or "–" }} · {{ p.print_time_min|duration }}{% if p.filament_g %} · {{ "%g"|format(p.filament_g) }} g{% endif %}
-      </p>
-      {% if p.printer_name %}<p class="meta">{{ p.printer_name }}</p>{% endif %}
-    </div>
-  </a>
-  {% endfor %}
+  {% for p in prints %}{{ ui.card(p) }}{% endfor %}
+</div>
+{% elif filtered %}
+<div class="empty">
+  {{ icon('search') }}
+  <h2>Nothing found</h2>
+  <p>No prints match {% if q %}“{{ q }}”{% if filtered and (material or status or printer or fail or nozzle) %} with these filters{% endif %}{% else %}these filters{% endif %}.</p>
+  <div class="actions"><a class="btn" href="{{ url_for('index') }}">{{ icon('x') }}<span>Clear search and filters</span></a></div>
 </div>
 {% else %}
-<p class="empty">{% if q or material or status or printer or fail or nozzle %}Nothing found.{% else %}No prints yet. <a href="{{ url_for('new_print') }}">Add your first one.</a>{% endif %}</p>
+<div class="empty">
+  {{ icon('logo') }}
+  <h2>No prints yet</h2>
+  <p>Add a print by hand, import a MakerWorld link or a sliced 3MF, or connect a printer and let Printvault keep track by itself.</p>
+  <div class="actions">
+    <a class="btn primary" href="{{ url_for('new_print') }}">{{ icon('plus') }}<span>New print</span></a>
+    {% if not all_printers %}<a class="btn" href="{{ url_for('new_printer') }}">{{ icon('printer') }}<span>Add a printer</span></a>{% endif %}
+  </div>
+</div>
 {% endif %}
-<script>
-(function () {
-  const box = document.getElementById("live");
-  const labels = {PREPARE: "Preparing", RUNNING: "Printing", PAUSE: "Paused", FINISH: "Finished",
-                  FAILED: "Failed", IDLE: "Idle"};
-  function el(tag, cls, text) {
-    const e = document.createElement(tag);
-    if (cls) e.className = cls;
-    if (text != null) e.textContent = text;
-    return e;
-  }
-  function dur(min) {
-    if (min == null) return "–";
-    const h = Math.floor(min / 60), m = min % 60;
-    return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
-  }
-  function fmt(v) { return Number(v).toLocaleString("en-GB", {maximumFractionDigits: 1}); }
-  function amsName(id) {
-    const n = Number(id);
-    return Number.isInteger(n) && n >= 0 && n < 4 ? "AMS " + "ABCD"[n] : "AMS " + id;
-  }
-  function spark(values, title) {
-    const ns = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(ns, "svg");
-    svg.setAttribute("class", "spark");
-    svg.setAttribute("viewBox", "0 0 100 24");
-    svg.setAttribute("preserveAspectRatio", "none");
-    const t = document.createElementNS(ns, "title");
-    t.textContent = title + (values.length ? `: ${fmt(Math.min(...values))}–${fmt(Math.max(...values))}` : ": no readings yet");
-    svg.append(t);
-    if (values.length > 1) {
-      const lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
-      const pts = values.map((v, i) => `${(i / (values.length - 1) * 100).toFixed(1)},${(22 - (v - lo) / span * 20).toFixed(1)}`);
-      const line = document.createElementNS(ns, "polyline");
-      line.setAttribute("points", pts.join(" "));
-      line.setAttribute("vector-effect", "non-scaling-stroke");
-      svg.append(line);
-    }
-    return svg;
-  }
-  // One fixed block per printer (card + camera). Only the card is replaced on every poll,
-  // so an open camera stream does not restart each time.
-  const items = new Map();
-  function camPanel(id) {
-    const wrap = el("div", "livecam");
-    const bar = el("div", "camctl");
-    const btn = el("button", "btn ghost", "📷 Camera");
-    btn.type = "button";
-    const full = el("a", "btn ghost", "↗ New tab");
-    full.href = `/printers/${id}/camera.mjpg`;
-    full.target = "_blank";
-    full.rel = "noopener";
-    full.hidden = true;
-    bar.append(btn, full);
-    const img = el("img");
-    img.alt = "Camera image";
-    img.hidden = true;
-    const msg = el("div", "meta");
-    msg.hidden = true;
-    wrap.append(bar, img, msg);
-    let open = false;
-    function start() {
-      msg.textContent = "Loading camera image…";
-      msg.hidden = false;
-      img.hidden = false;
-      img.src = `/printers/${id}/camera.mjpg?t=${Date.now()}`;
-    }
-    function stop() { img.removeAttribute("src"); img.hidden = true; msg.hidden = true; }
-    img.addEventListener("load", () => { msg.hidden = true; });
-    img.addEventListener("error", () => {
-      if (!open || !img.getAttribute("src")) return;
-      img.hidden = true;
-      msg.textContent = "No camera image. Is LAN live view enabled on the printer?";
-      msg.hidden = false;
-    });
-    btn.addEventListener("click", () => {
-      open = !open;
-      btn.textContent = open ? "📷 Close camera" : "📷 Camera";
-      full.hidden = !open;
-      open ? start() : stop();
-    });
-    // no stream to a tab nobody is looking at
-    document.addEventListener("visibilitychange", () => {
-      if (!open) return;
-      document.hidden ? stop() : start();
-    });
-    return wrap;
-  }
-  // Cards of running prints without an own cover (a thumbnail does not count) show the printer's camera image (new every 30 s).
-  // When the live status says the print is no longer running: one last image, then stop.
-  // After a reload the card shows the end photo the listener attached to the print.
-  const SNAP_MS = 30000;
-  function snapFailed(img) {   // no camera image: back to the thumbnail, or "no photo"
-    img.nextElementSibling?.classList.contains("snaptag") && img.nextElementSibling.remove();
-    if (img.dataset.fallback) {
-      const thumb = el("img");
-      thumb.alt = "";
-      thumb.src = img.dataset.fallback;
-      img.replaceWith(thumb);
-    } else {
-      img.replaceWith(el("div", "nothumb", "no photo"));
-    }
-  }
-  function refreshSnap(img, last) {
-    const next = new Image();
-    next.onload = () => {
-      img.src = next.src;
-      if (last) { img.dataset.done = "1"; img.nextElementSibling.textContent = "end"; }
-    };
-    next.src = `/printers/${img.dataset.printer}/snapshot.jpg?t=${Date.now()}`;
-  }
-  for (const img of document.querySelectorAll("img.livesnap")) {
-    img.addEventListener("error", () => snapFailed(img), {once: true});
-    if (img.complete && !img.naturalWidth) snapFailed(img);   // already failed before this script ran
-  }
-  let activePrints = null;   // print ids that are running according to the listener (null = unknown)
-  setInterval(() => {
-    if (document.hidden) return;
-    for (const img of document.querySelectorAll("img.livesnap:not([data-done])")) {
-      const ended = activePrints !== null && !activePrints.has(Number(img.dataset.print));
-      refreshSnap(img, ended);
-    }
-  }, SNAP_MS);
-  // ---------- status card in the style of the printer screen ----------
-  const ACTIVE = ["PREPARE", "RUNNING", "PAUSE"];
-  function endClock(min) {
-    if (min == null) return null;
-    const end = new Date(Date.now() + min * 60000), now = new Date();
-    const hm = end.toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit", hour12: false});
-    const days = Math.round((new Date(end).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 864e5);
-    return days === 0 ? hm : days === 1 ? `tomorrow ${hm}` : `${end.toLocaleDateString("en-GB", {weekday: "short"})} ${hm}`;
-  }
-  const deg = v => v == null ? "–" : `${Math.round(v)}°`;
-  // Image box on the left: persists between polls; only the source changes when needed.
-  function mediaBox() {
-    const box = el("div", "livemedia"), img = el("img"), tag = el("span", "snaptag", "live");
-    img.alt = "";
-    box.append(img, tag);
-    let want = null, timer = null, fallback = null;
-    function load(url) { img.src = url; }
-    function snapUrl(id) { return `/printers/${id}/snapshot.jpg?t=${Date.now()}`; }
-    img.addEventListener("error", () => {
-      if (want && want.kind === "snap" && fallback) { tag.hidden = true; load(fallback); }
-      else box.hidden = true;
-    });
-    img.addEventListener("load", () => { box.hidden = false; });
-    return {
-      el: box,
-      set(kind, url, fb) {   // kind: "snap" (url = printer id), "img" or null
-        fallback = fb || null;
-        const key = kind && `${kind}:${url}`;
-        if (want && want.key === key) return;
-        want = kind ? {kind, url, key} : null;
-        clearInterval(timer);
-        tag.hidden = kind !== "snap";
-        if (!kind) { box.hidden = true; img.removeAttribute("src"); return; }
-        if (kind === "snap") {
-          load(snapUrl(url));
-          timer = setInterval(() => {
-            if (document.hidden) return;
-            const next = new Image();   // load first, then swap: no flicker
-            next.onload = () => { img.src = next.src; };
-            next.src = snapUrl(url);
-          }, SNAP_MS);
-        } else {
-          load(url);
-        }
-      },
-      stop() { clearInterval(timer); img.removeAttribute("src"); },
-    };
-  }
-  function chooseMedia(p, media) {
-    const active = ACTIVE.includes(p.gcode_state);
-    if (active && p.camera && !p.own_cover) media.set("snap", p.printer_id, p.cover || p.printer_photo);
-    else if (p.cover) media.set("img", p.cover);
-    else if (active && p.camera) media.set("snap", p.printer_id, p.printer_photo);
-    else if (p.printer_photo) media.set("img", p.printer_photo);
-    else media.set(null);
-  }
-  function tempTile(label, t) {
-    const tile = el("div", "ltemp");
-    tile.append(el("span", "lbl", label));
-    const v = el("strong", null, deg(t && t.cur));
-    tile.append(v);
-    if (t && t.target) tile.append(el("span", "tar", `/ ${deg(t.target)}`));
-    return tile;
-  }
-  function render(data) {
-    const printers = (data.printers || []);
-    if (data.available) {
-      activePrints = new Set(printers.filter(p => p.print_id && ACTIVE.includes(p.gcode_state)).map(p => p.print_id));
-    }
-    box.hidden = !printers.length;
-    const seen = new Set();
-    for (const p of printers) {
-      const active = ACTIVE.includes(p.gcode_state);
-      const ended = p.gcode_state === "FINISH" || p.gcode_state === "FAILED";
-      const card = el(p.print_id ? "a" : "div", "livecard" + (active ? " active" : ""));
-      if (p.print_id) card.href = "/print/" + p.print_id;
-      const head = el("div", "livehead");
-      head.append(el("strong", null, p.printer));
-      const st = !p.connected ? "not connected" : (p.phase || labels[p.gcode_state] || p.gcode_state || "waiting…");
-      const stEl = el("span", "livestate " + (p.connected ? (p.gcode_state || "").toLowerCase() : "offline"), st);
-      head.append(stEl);
-      card.append(head);
-      if (active || ended) {
-        const nm = el("div", "livename", p.name || "–");
-        card.append(nm);
-        if (p.plate_cnt > 1 && p.plate_idx) card.append(el("div", "meta", `plate ${p.plate_idx} of ${p.plate_cnt}`));
-        const bar = el("div", "bar"), fill = el("span");
-        fill.style.width = Math.max(0, Math.min(100, p.percent || 0)) + "%";
-        bar.append(fill);
-        card.append(bar);
-        const prog = el("div", "lprog");
-        prog.append(el("strong", null, `${p.percent ?? "–"}%`), el("span", null, `layer ${p.layer ?? "–"}/${p.total_layers ?? "–"}`));
-        if (active) {
-          prog.append(el("span", null, `${dur(p.remaining_min)} left`));
-          const clock = endClock(p.remaining_min);
-          if (clock) prog.append(el("span", "lend", `done at ${clock}`));
-        }
-        if (p.error && p.gcode_state === "FAILED") prog.append(el("span", "liveerr", `error ${p.error}`));
-        card.append(prog);
-      }
-      if (p.gcode_state === "FAILED" && p.error_text) card.append(el("div", "meta liveerr", p.error_text));
-      const temps = p.temps || {};
-      if (p.connected && (temps.nozzle || temps.bed)) {
-        const row = el("div", "ltemps");
-        row.append(tempTile("Nozzle", temps.nozzle), tempTile("Bed", temps.bed));
-        if (temps.chamber && temps.chamber.cur != null) row.append(tempTile("Chamber", temps.chamber));
-        card.append(row);
-      }
-      if (p.connected && (active || ended)) {
-        const info = el("div", "linfo");
-        if (p.speed) info.append(el("span", null, `⚡ ${p.speed.name}${p.speed.percent ? ` ${p.speed.percent}%` : ""}`));
-        const fans = p.fans || {};
-        const fanText = [["part", "part"], ["aux", "aux"], ["chamber", "chamber"], ["heatbreak", "heatbreak"]]
-          .filter(([k]) => fans[k] != null).map(([k, label]) => `${label} ${fans[k]}%`).join(" · ");
-        if (fanText) info.append(el("span", null, `🌀 ${fanText}`));
-        if (p.tray) {
-          const t = el("span", "ltray");
-          const dot = el("span", "dot");
-          if (p.tray.color) dot.style.background = "#" + p.tray.color; else dot.classList.add("empty");
-          t.append(dot, [p.tray.label, p.tray.name || p.tray.type].filter(Boolean).join(" · "));
-          info.append(t);
-        }
-        if (info.childElementCount) card.append(info);
-      }
-      for (const h of (p.hms || [])) {
-        const line = el("div", "meta livehms");
-        line.append("HMS ");
-        // the card itself links to the print; then no nested link
-        const a = el(p.print_id ? "span" : "a", null, h.code);
-        if (!p.print_id) { a.href = h.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
-        line.append(a, h.text ? ` · ${h.text}` : (h.module ? ` · ${h.module}` : ""));
-        card.append(line);
-      }
-      const ams = p.ams || [];
-      if (ams.length) {
-        const list = el("div", "liveams");
-        for (const u of ams) {
-          const row = el("div", "amsrow");
-          row.append(el("span", "amsname", amsName(u.id)));
-          const hum = u.humidity_pct != null ? `${fmt(u.humidity_pct)} %` : (u.humidity_level != null ? `level ${u.humidity_level}` : "–");
-          row.append(el("span", null, `💧 ${hum}`), el("span", null, u.temp != null ? `🌡 ${fmt(u.temp)} °C` : ""));
-          const hist = ((p.ams_history || {})[u.id] || []);
-          const useLevel = u.humidity_pct == null;
-          row.append(spark(hist.map(r => useLevel ? r[2] : r[1]).filter(v => v != null),
-                           `Humidity, last 24 hours (${useLevel ? "level" : "%"})`));
-          list.append(row);
-        }
-        card.append(list);
-      }
-      let item = items.get(p.printer_id);
-      if (!item) {
-        item = {root: el("div", "liveitem screen"), card: null, media: mediaBox(), cam: camPanel(p.printer_id)};
-        item.root.append(item.media.el, item.cam);
-        items.set(p.printer_id, item);
-      }
-      chooseMedia(p, item.media);
-      if (item.card) item.card.replaceWith(card); else item.media.el.after(card);
-      item.card = card;
-      box.append(item.root);   // follow the order; moving does not break the stream
-      seen.add(p.printer_id);
-    }
-    for (const [id, item] of items) {
-      if (!seen.has(id)) {
-        item.cam.querySelector("img").removeAttribute("src");
-        item.media.stop();
-        item.root.remove();
-        items.delete(id);
-      }
-    }
-  }
-  async function poll() {
-    try {
-      const r = await fetch("/api/live", {cache: "no-store"});
-      if (r.ok) render(await r.json());
-    } catch (e) { /* quiet: try again later */ }
-    setTimeout(poll, document.hidden ? 30000 : 5000);
-  }
-  poll();
-})();
-</script>
 {% endblock %}
+{% block scripts %}<script src="{{ static_v('live.js') }}"></script>{% endblock %}

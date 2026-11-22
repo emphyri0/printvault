@@ -2,25 +2,60 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121316">
   <title>{% block title %}Printvault{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/inter-400.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ static_v('style.css') }}">
+  <link rel="icon" href="{{ url_for('static', filename='icon.svg') }}" type="image/svg+xml">
 </head>
 <body>
-  <header class="top">
-    <nav>
-      <a class="brand" href="{{ url_for('index') }}">Printvault</a>
-      <a class="navlink {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Prints</a>
-      <a class="navlink {% if request.endpoint and ('printer' in request.endpoint or 'maintenance' in request.endpoint) %}active{% endif %}" href="{{ url_for('printers') }}">Printers</a>
-      <a class="navlink {% if request.endpoint and request.endpoint.startswith('settings') %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
-    </nav>
-    <a class="btn primary" href="{{ url_for('new_print') }}">+ New print</a>
-  </header>
-  <main>
-    {% with messages = get_flashed_messages(with_categories=true) %}
-      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
-    {% endwith %}
+{{ icon_sprite() }}
+<a class="skip" href="#main">Skip to content</a>
+{% set ep = request.endpoint or '' %}
+{% set nav = [
+  ('index', 'grid', 'Prints', ep in ('index', 'show_print', 'new_print', 'edit_print')),
+  ('printers', 'printer', 'Printers', ep in ('printers', 'new_printer', 'edit_printer')),
+  ('maintenance_overview', 'wrench', 'Maintenance', 'maintenance' in ep),
+  ('settings', 'gear', 'Settings', ep.startswith('settings')),
+] %}
+{% macro navlink(item) %}{% set target, ic, text, on = item %}
+<a class="nav{{ ' on' if on }}" href="{{ url_for(target) }}"{% if on %} aria-current="page"{% endif %}>{{ icon(ic) }}<span>{{ text }}</span>
+  {%- if target == 'maintenance_overview' and maintenance_due %}<span class="navbadge num">{{ maintenance_due }}<span class="sr"> due</span></span>{% endif %}</a>
+{%- endmacro %}
+<div class="shell">
+  <aside class="side" aria-label="Sidebar">
+    <a class="brand" href="{{ url_for('index') }}">{{ icon('logo', 'logo') }}<span>Printvault</span></a>
+    <a class="btn primary newbtn" href="{{ url_for('new_print') }}">{{ icon('plus') }}<span>New print</span></a>
+    <nav class="navlist" aria-label="Main">{% for item in nav %}{{ navlink(item) }}{% endfor %}</nav>
+    <a class="side-foot" id="sidestatus" href="{{ url_for('index') }}" hidden><span class="dot-live" aria-hidden="true"></span><span class="txt"></span></a>
+  </aside>
+  <main class="main" id="main">
+    <header class="topbar">
+      <form class="search" role="search" method="get" action="{{ url_for('index') }}">
+        {{ icon('search') }}
+        <label class="sr" for="search-q">Search prints</label>
+        <input id="search-q" type="search" name="q" value="{{ request.args.get('q', '') if ep == 'index' else '' }}" placeholder="Search prints, tags, notes…" enterkeyhint="search">
+        {% if ep == 'index' %}{% for k, v in request.args.items() if k != 'q' and v %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+        {% if request.args.get('q') %}<a class="clear" href="{{ filter_url('q', request.args.get('q')) }}" title="Clear search" aria-label="Clear search">{{ icon('x', 'bico') }}</a>{% endif %}{% endif %}
+      </form>
+      {% block topactions %}{% endblock %}
+    </header>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}
+    <div class="flashes" role="status">
+      {% for cat, msg in messages %}<div class="flash {{ cat }}">{{ icon('check' if cat == 'ok' else 'alert') }}<span>{{ msg }}</span></div>{% endfor %}
+    </div>
+    {% endif %}{% endwith %}
     {% block content %}{% endblock %}
   </main>
+</div>
+<nav class="bottomnav" aria-label="Main">
+  {{ navlink(nav[0]) }}{{ navlink(nav[1]) }}
+  <a class="nav new{{ ' on' if ep == 'new_print' }}" href="{{ url_for('new_print') }}">{{ icon('plus') }}<span>New</span></a>
+  {{ navlink(nav[2]) }}{{ navlink(nav[3]) }}
+</nav>
+<script src="{{ static_v('app.js') }}"></script>
+{% block scripts %}{% endblock %}
+<script>PV.boot();</script>
 </body>
 </html>
