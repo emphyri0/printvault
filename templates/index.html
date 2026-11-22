@@ -45,9 +45,9 @@
   <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
     <div class="thumb">
       {% if p.status == 'printing' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
-        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ url_for('uploaded', stored_name=p.cover) }}"{% endif %}
+        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ thumb_url(p.cover) }}"{% endif %}
         alt="Camera image of the printer" loading="lazy"><span class="snaptag">live</span>
-      {% elif p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
+      {% elif p.cover %}<img src="{{ thumb_url(p.cover) }}" alt="" loading="lazy">
       {% else %}<div class="nothumb">no photo</div>{% endif %}
       <span class="badge {{ p.status }}">{{ p.status|label }}{% if p.status == 'failed' and p.fail_reason %} · {{ p.fail_reason|label }}{% endif %}</span>
     </div>

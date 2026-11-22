@@ -20,11 +20,13 @@ import camera
 import maintenance
 import notify
 import slicer
+import thumbs
 from bambu_errors import error_code
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
+THUMBS = thumbs.Worker(UPLOAD_DIR)   # WebP thumbnails, made in the background
 
 PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
 MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
@@ -254,6 +256,8 @@ def store_bytes(print_id, kind, content, ext, original_name):
         "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
         (print_id, kind, stored, original_name, len(content)),
     )
+    if kind == "photo":
+        THUMBS.add(stored)
     return cur.lastrowid
 
 
@@ -311,6 +315,8 @@ def save_uploads(print_id, uploads):
             "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
             (print_id, kind, stored, secure_filename(f.filename) or stored, os.path.getsize(path)),
         )
+        if kind == "photo":
+            THUMBS.add(stored)
     db.commit()
     if skipped:
         flash("Skipped (unknown file type): " + ", ".join(skipped), "warn")
@@ -584,10 +590,7 @@ def delete_print(print_id):
     get_print(print_id)
     db = get_db()
     for f in db.execute("SELECT stored_name FROM files WHERE print_id = ?", (print_id,)):
-        try:
-            os.remove(os.path.join(UPLOAD_DIR, f["stored_name"]))
-        except FileNotFoundError:
-            pass
+        remove_upload(f["stored_name"])
     db.execute("DELETE FROM prints WHERE id = ?", (print_id,))
     db.commit()
     flash("Print deleted.", "ok")
@@ -624,10 +627,7 @@ def delete_file(file_id):
     f = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
     if f is None:
         abort(404)
-    try:
-        os.remove(os.path.join(UPLOAD_DIR, f["stored_name"]))
-    except FileNotFoundError:
-        pass
+    remove_upload(f["stored_name"])
     db.execute("DELETE FROM files WHERE id = ?", (file_id,))
     db.commit()
     return redirect(url_for("show_print", print_id=f["print_id"]))
@@ -636,6 +636,33 @@ def delete_file(file_id):
 @app.route("/uploads/<path:stored_name>")
 def uploaded(stored_name):
     return send_from_directory(UPLOAD_DIR, stored_name)
+
+
+@app.route("/thumb/<int:size>/<stored_name>")
+def thumb(size, stored_name):
+    """WebP thumbnail of a photo; the original while the thumbnail does not exist (yet)."""
+    if size not in thumbs.SIZES or not thumbs.is_photo(stored_name):
+        abort(404)
+    if os.path.exists(thumbs.thumb_path(UPLOAD_DIR, stored_name, size)):
+        return send_from_directory(os.path.join(UPLOAD_DIR, thumbs.SUBDIR), thumbs.thumb_name(stored_name, size),
+                                   mimetype="image/webp", max_age=30 * 86400)
+    if not os.path.isfile(os.path.join(UPLOAD_DIR, stored_name)):
+        abort(404)
+    THUMBS.add(stored_name)
+    resp = send_from_directory(UPLOAD_DIR, stored_name)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.template_global()
+def thumb_url(stored_name, size=600):
+    """URL of a photo at card (600) or detail (1600) size. A GIF at detail size stays the original
+    (the animation is only shown there)."""
+    if not stored_name:
+        return None
+    if size > 600 and stored_name.lower().endswith(".gif"):
+        return url_for("uploaded", stored_name=stored_name)
+    return url_for("thumb", size=size, stored_name=stored_name)
 
 
 @app.route("/download/<int:file_id>")
@@ -683,6 +710,7 @@ def save_printer_photo(upload):
         return None
     stored = f"{uuid.uuid4().hex}.{ext}"
     upload.save(os.path.join(UPLOAD_DIR, stored))
+    THUMBS.add(stored)
     return stored
 
 
@@ -693,6 +721,7 @@ def remove_upload(stored_name):
         os.remove(os.path.join(UPLOAD_DIR, stored_name))
     except FileNotFoundError:
         pass
+    thumbs.remove(UPLOAD_DIR, stored_name)
 
 
 @app.route("/printers")
@@ -1029,10 +1058,10 @@ def api_live():
             row = db.execute(f"SELECT {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own FROM prints p WHERE p.id = ?",
                              (p["print_id"],)).fetchone()
             if row and row["cover"]:
-                p["cover"], p["own_cover"] = url_for("uploaded", stored_name=row["cover"]), bool(row["own"])
+                p["cover"], p["own_cover"] = thumb_url(row["cover"], 1600), bool(row["own"])
         pr = db.execute("SELECT photo, COALESCE(ip, '') != '' AND COALESCE(access_code, '') != '' AS cam "
                         "FROM printers WHERE id = ?", (p.get("printer_id"),)).fetchone()
-        p["printer_photo"] = url_for("uploaded", stored_name=pr["photo"]) if pr and pr["photo"] else None
+        p["printer_photo"] = thumb_url(pr["photo"], 1600) if pr and pr["photo"] else None
         p["camera"] = bool(pr and pr["cam"])
     return jsonify(data)
 
@@ -1164,6 +1193,7 @@ def save_makerworld_cover(db, print_id, cover):
         "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
         (print_id, "photo", stored, f"makerworld-cover.{ext}", len(content)),
     )
+    THUMBS.add(stored)
 
 
 # Fields filled in from MakerWorld when editing, if they are still empty.
@@ -1203,6 +1233,7 @@ def too_large(_e):
 
 
 init_db()
+THUMBS.backfill()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8100, debug=True)

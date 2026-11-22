@@ -28,7 +28,7 @@
   </fieldset>
   <label class="wide">Photo
     {% if pr.photo %}
-    <img class="preview" src="{{ url_for('uploaded', stored_name=pr.photo) }}" alt="">
+    <img class="preview" src="{{ thumb_url(pr.photo) }}" alt="">
     <span class="check"><input type="checkbox" name="remove_photo" value="1"> Remove current photo</span>
     {% endif %}
     <input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,.gif">

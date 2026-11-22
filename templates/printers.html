@@ -10,7 +10,7 @@
   {% for pr in printers %}
   <div class="card">
     <div class="thumb">
-      {% if pr.photo %}<img src="{{ url_for('uploaded', stored_name=pr.photo) }}" alt="{{ pr.name }}" loading="lazy">
+      {% if pr.photo %}<img src="{{ thumb_url(pr.photo) }}" alt="{{ pr.name }}" loading="lazy">
       {% else %}<div class="nothumb">no photo</div>{% endif %}
     </div>
     <div class="body">

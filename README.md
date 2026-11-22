@@ -88,6 +88,16 @@ docker compose up -d --build
 
 The app then runs at http://<vm-ip>:8100. It is also reachable via Tailscale.
 
+## Photos and thumbnails
+
+Every photo gets two smaller WebP versions in `data/uploads/thumbs/`: 600 px wide for the cards and 1600 px for the detail page. They are made with ffmpeg in the background when a photo comes in (upload, 3MF/G-code thumbnail, MakerWorld cover, printer photo, camera photo of the listener) and once at start-up for photos that do not have them yet.
+
+- Only scaled down, never up. The EXIF orientation of phone photos is applied.
+- No metadata in the thumbnails (no EXIF, GPS or XMP). The originals are stored unchanged and stay downloadable.
+- Of an animated GIF the thumbnail is the first frame; the animation is only shown on the detail page.
+- `/thumb/<600|1600>/<file>` serves the original as long as the thumbnail does not exist (yet), so a failed conversion (logged) never breaks a page.
+- Deleting a photo or a print also deletes its thumbnails. The folder can be deleted at any time; it is rebuilt at the next start.
+
 ## Data
 
 Everything is in `./data`: the SQLite database `printvault.db` and the uploads in `uploads/`. Back up that folder and you have everything.
@@ -100,4 +110,11 @@ pip install -r requirements.txt
 python app.py                     # http://127.0.0.1:8100
 python mqtt_listener.py           # second terminal; live status at http://127.0.0.1:8101/live
 python -m unittest discover -s tests
+```
+
+The thumbnail tests need ffmpeg and are skipped without it. To run everything in the image (with ffmpeg, no network):
+
+```bash
+docker run --rm --network none -u "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 -e DATA_DIR=/tmp/pvtest \
+  -v "$PWD":/src:ro -w /src --entrypoint python printvault:local -m unittest discover -s tests
 ```

@@ -26,6 +26,7 @@ import bambu_status
 import camera
 import maintenance
 import notify
+import thumbs
 from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code is also used by app)
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -399,6 +400,7 @@ def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
     except BaseException:
         os.remove(path)
         raise
+    thumbs.make(upload_dir, stored)   # logs and carries on when it fails; the app falls back to the original
     return file_id
 
 
