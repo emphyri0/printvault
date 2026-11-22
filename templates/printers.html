@@ -16,7 +16,8 @@
     </div>
     <div class="cbody">
       <h2 id="printer-{{ pr.id }}">{{ pr.name }}</h2>
-      {% if pr.model %}<p class="meta">{{ pr.model }}</p>{% endif %}
+      {% if pr.bambu_model or pr.model %}<p class="meta">{{ [pr.bambu_model|label if pr.bambu_model else None, pr.model]|select|join(" · ") }}</p>{% endif %}
+      {% if cams[pr.id] %}<p class="meta">{{ icon('camera', 'bico') }}{{ camera_types[cams[pr.id]] }}</p>{% endif %}
       <div class="pstats">
         <div><span class="sv num">{{ pr.n }}</span><span class="sl">prints</span></div>
         <div><span class="sv num">{{ pr.ok or 0 }}</span><span class="sl">succeeded</span></div>
@@ -27,7 +28,7 @@
       <div class="actions">
         <a class="btn small" href="{{ url_for('index', printer=pr.id) }}">{{ icon('grid') }}<span>Prints</span></a>
         <a class="btn small" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">{{ icon('wrench') }}<span>Maintenance</span>{% if due[pr.id] %} <span class="duebadge">{{ icon('alert', 'bico') }}{{ due[pr.id] }} due</span>{% endif %}</a>
-        {% if pr.ip and pr.access_code %}<a class="btn small" href="{{ url_for('camera_stream', printer_id=pr.id) }}" target="_blank" rel="noopener">{{ icon('video') }}<span>Camera</span></a>{% endif %}
+        {% if cams[pr.id] %}<a class="btn small" href="{{ url_for('camera_stream', printer_id=pr.id) }}" target="_blank" rel="noopener">{{ icon('video') }}<span>Camera</span></a>{% endif %}
         <a class="btn small ghost" href="{{ url_for('edit_printer', printer_id=pr.id) }}">{{ icon('edit') }}<span>Edit</span></a>
       </div>
     </div>

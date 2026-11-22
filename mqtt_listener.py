@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import bambu_errors
+import bambu_models
 import bambu_status
 import camera
 import maintenance
@@ -373,6 +374,7 @@ class PrinterTracker:
                 "phase_code": phase_code,
                 "phase": phase_text,
                 "temps": {k: {"cur": v[0], "target": v[1]} for k, v in bambu_status.temperatures(s).items()},
+                "nozzles": bambu_status.nozzles(s),   # dual-nozzle printers only
                 "fans": bambu_status.fans(s),
                 "speed": bambu_status.speed(s),
                 "tray": bambu_status.active_tray(s),
@@ -469,7 +471,8 @@ class Supervisor:
 
     def configs(self):
         with connect_db(self.db_path) as db:
-            rows = db.execute("SELECT id, name, ip, serial, access_code FROM printers WHERE mqtt_enabled = 1 "
+            rows = db.execute("SELECT id, name, ip, serial, access_code, bambu_model, camera_type "
+                              "FROM printers WHERE mqtt_enabled = 1 "
                               "AND COALESCE(ip, '') != '' AND COALESCE(serial, '') != '' "
                               "AND COALESCE(access_code, '') != ''").fetchall()
         return {r["id"]: dict(r) for r in rows}
@@ -509,7 +512,11 @@ class Supervisor:
 
     def _snapshot_worker(self, cfg, print_id, status):
         try:
-            jpeg = camera.grab_snapshot(cfg["ip"], cfg["access_code"])
+            route = bambu_models.printer_camera(cfg)
+            if route is None:
+                log.info("printer %s: no camera, so no camera image for print %s", cfg["id"], print_id)
+                return
+            jpeg = camera.grab_snapshot(cfg["ip"], cfg["access_code"], route=route)
             file_id = save_snapshot(self.db_path, UPLOAD_DIR, print_id, jpeg, status, now_local())
             log.info("printer %s: camera image for print %s saved (file %s)", cfg["id"], print_id, file_id)
         except Exception as e:

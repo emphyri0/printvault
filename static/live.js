@@ -64,7 +64,24 @@
     const t = p.temps || {};
     if (!p.connected || !(t.nozzle || t.bed)) return null;
     const row = el("div", "temps");
-    row.append(tempTile("nozzle", "Nozzle", t.nozzle), tempTile("bed", "Bed", t.bed));
+    const dual = Array.isArray(p.nozzles) && p.nozzles.length > 1;
+    if (dual) {
+      // dual-nozzle printers (H2D, H2C): both nozzles, the active one marked with a word, not colour alone
+      row.classList.add("dual");
+      for (const n of p.nozzles) {
+        const tile = tempTile("nozzle", `${n.name} nozzle`, n);
+        if (n.active) {
+          tile.classList.add("on");
+          const tag = el("span", "act");
+          tag.append(icon("check", "bico"), "active");
+          tile.append(tag);
+        }
+        row.append(tile);
+      }
+      row.append(tempTile("bed", "Bed", t.bed));
+    } else {
+      row.append(tempTile("nozzle", "Nozzle", t.nozzle), tempTile("bed", "Bed", t.bed));
+    }
     if (t.chamber && t.chamber.cur != null) row.append(tempTile("box", "Chamber", t.chamber));
     return row;
   }

@@ -10,6 +10,10 @@ SOURCES
   - Speed profiles (spd_lvl), the 0–15 fan scale and nozzle type codes (e.g. HS01): read the way
     ha-bambulab reads them (const.SPEED_PROFILE, utils.fan_percentage, models.Info._nozzle_type_name).
   - Temperatures under device.* are packed as (target << 16) | current: 0xDC00DC = target 220, current 220.
+    Older firmware (X1, P1, A1) sends plain numbers instead (nozzle_temper, bed_temper, chamber_temper);
+    both are accepted everywhere. Dual-nozzle printers (H2D, H2C) list both nozzles under
+    device.extruder.info; bits 4–7 of device.extruder.state give the active one (id 0 = right, 1 = left).
+    Field formats per model as documented in ha-bambulab (MIT), pybambu/models.py.
 """
 import bambu_errors
 
@@ -49,6 +53,10 @@ SPEED_PROFILES = {"silent": "Silent", "standard": "Standard", "sport": "Sport", 
 SPEED_LEVELS = {1: "silent", 2: "standard", 3: "sport", 4: "ludicrous"}
 
 NOZZLE_MATERIALS = {"00": "stainless steel", "01": "hardened steel", "05": "tungsten carbide"}
+# Older firmware sends the nozzle type as a word instead of a code like HS01
+NOZZLE_WORDS = {"stainless_steel": "stainless steel", "hardened_steel": "hardened steel",
+                "tungsten_carbide": "tungsten carbide", "brass": "brass"}
+NOZZLE_SIDES = {0: "Right", 1: "Left"}
 
 GCODE_STATES = {"PREPARE": "Preparing", "RUNNING": "Printing", "PAUSE": "Paused", "FINISH": "Finished",
                 "FAILED": "Failed", "IDLE": "Idle", "SLICING": "Slicing", "INIT": "Starting up"}
@@ -121,19 +129,54 @@ def phase(state):
 
 
 def unpack_temp(v):
-    """(current, target) from a packed temperature (target << 16 | current)."""
-    v = as_int(v)
-    if v is None or v < 0:
+    """(current, target) from a packed temperature (target << 16 | current). A plain number (older
+    firmware) gives (value, 0); a fractional one keeps its decimal and has no target."""
+    f = as_float(v)
+    if f is None or f < 0:
         return None, None
+    if f != int(f):
+        return f, None
+    v = int(f)
     return v & 0xFFFF, v >> 16
+
+
+def _extruders(state):
+    info = _get(state, "device", "extruder", "info")
+    return [e for e in info if isinstance(e, dict)] if isinstance(info, list) else []
+
+
+def active_nozzle(state):
+    """Id of the active nozzle on a dual-nozzle printer (device.extruder.state bits 4–7), else None."""
+    st = as_int(_get(state, "device", "extruder", "state"))
+    return None if st is None else (st >> 4) & 0xF
+
+
+def nozzles(state):
+    """Both nozzles of a dual-nozzle printer: [{id, name, cur, target, active}], else None."""
+    ext = _extruders(state)
+    if len(ext) < 2:
+        return None
+    active = active_nozzle(state)
+    out = []
+    for e in sorted(ext, key=lambda e: as_int(e.get("id")) or 0):
+        i = as_int(e.get("id"))
+        cur, tar = unpack_temp(e.get("temp"))
+        out.append({"id": i, "name": NOZZLE_SIDES.get(i, f"Nozzle {(i or 0) + 1}"), "cur": cur,
+                    "target": tar or None, "active": i == active})
+    return out
 
 
 def temperatures(state):
     """{'nozzle': (current, target), 'bed': (…), 'chamber': (current, target or None)}; None where unknown."""
-    ext = _get(state, "device", "extruder", "info", 0, "temp")
-    n_cur, n_tar = as_float(state.get("nozzle_temper")), as_float(state.get("nozzle_target_temper"))
-    if n_cur is None:
-        n_cur, n_tar = unpack_temp(ext)
+    ext = _extruders(state)
+    if len(ext) >= 2:   # dual nozzle: the active one (the top-level fields follow it too, but not always)
+        active = active_nozzle(state)
+        entry = next((e for e in ext if as_int(e.get("id")) == active), ext[0])
+        n_cur, n_tar = unpack_temp(entry.get("temp"))
+    else:
+        n_cur, n_tar = as_float(state.get("nozzle_temper")), as_float(state.get("nozzle_target_temper"))
+        if n_cur is None and ext:
+            n_cur, n_tar = unpack_temp(ext[0].get("temp"))
     b_cur, b_tar = as_float(state.get("bed_temper")), as_float(state.get("bed_target_temper"))
     if b_cur is None:
         b_cur, b_tar = unpack_temp(_get(state, "device", "bed", "info", "temp"))
@@ -174,8 +217,12 @@ def speed(state):
 
 
 def nozzle_type_name(code):
-    """'HS01' → 'hardened steel'; 'HH01' → 'hardened steel, high-flow'; unknown → None."""
-    code = str(code or "").strip().upper()
+    """'HS01' → 'hardened steel'; 'HH01' → 'hardened steel, high-flow'; 'hardened_steel' (older
+    firmware) → 'hardened steel'; unknown → None."""
+    word = str(code or "").strip().lower()
+    if word in NOZZLE_WORDS:
+        return NOZZLE_WORDS[word]
+    code = word.upper()
     if len(code) < 4:
         return None
     if code[1] == "U":
@@ -192,7 +239,9 @@ def active_tray(state):
     if now is None or now == 255:
         return None
     if now == 254:
-        slot = _get(state, "vir_slot", 0) or {}
+        slot = _get(state, "vir_slot", 0) or state.get("vt_tray") or {}   # vt_tray: older firmware
+        if not isinstance(slot, dict):
+            slot = {}
         unit, tray, label = None, None, "External spool"
     else:
         unit, tray = (now >> 2, now & 3) if now < 128 else (now, 0)   # AMS HT: own id, one slot
@@ -210,13 +259,20 @@ def active_tray(state):
 def print_settings(state):
     """What may go into the print record at the start of a print (only the fields that are known)."""
     out = {}
-    diameter = as_float(state.get("nozzle_diameter") or _get(state, "device", "nozzle", "info", 0, "diameter"))
+    info = _get(state, "device", "nozzle", "info")
+    info = [n for n in info if isinstance(n, dict)] if isinstance(info, list) else []
+    active = active_nozzle(state)
+    nozzle = next((n for n in info if active is not None and as_int(n.get("id")) == active), info[0] if info else {})
+    diameter = as_float(state.get("nozzle_diameter") or nozzle.get("diameter"))
     if diameter:
         out["nozzle"] = diameter
-    code = state.get("nozzle_type") or _get(state, "device", "nozzle", "info", 0, "type")
+    code = state.get("nozzle_type") or nozzle.get("type")
     if code:
         name = nozzle_type_name(code)
-        out["nozzle_type"] = f"{name[0].upper()}{name[1:]} ({code})" if name else str(code)
+        if name and str(code).strip().lower() in NOZZLE_WORDS:
+            out["nozzle_type"] = name[0].upper() + name[1:]          # older firmware: a word, no code
+        else:
+            out["nozzle_type"] = f"{name[0].upper()}{name[1:]} ({code})" if name else str(code)
     plate = _get(state, "device", "plate", "cur_id")
     if plate:
         out["plate_type"] = str(plate)   # the source has no readable name for these codes

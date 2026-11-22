@@ -12,7 +12,7 @@ A small web app to keep track of your 3D prints: photos, model files (3mf, stl, 
 - Prints with photos, model files (3mf, stl, step, obj, gcode), filament, print time, settings and notes
 - Printers with a photo, and per print which printer made it
 - Import from MakerWorld: paste a model link and the title, designer, cover, filament, weight and print time are filled in (you add the 3mf file yourself)
-- Live connection with Bambu Lab printers via MQTT (read-only, cloud mode can stay on): prints are created and closed automatically, with AMS slots, and the home page shows the running print large at the top
+- Live connection with Bambu Lab printers via MQTT (read-only, cloud mode can stay on; P2S tested, X1, H2, P1 and A1 series supported, see *Supported models*): prints are created and closed automatically, with AMS slots, and the home page shows the running print large at the top
 - Error codes (print_error and HMS) as readable text, with a suggested fail reason for failed prints
 - AMS humidity and temperature per unit, with the last 24 hours in the live block
 - Maintenance tasks per printer with an interval in print hours and/or days
@@ -36,7 +36,7 @@ Dates are shown as `22 Nov 2026` and times as `22 Nov 2026, 16:42` (24-hour cloc
 
 ## Live connection (MQTT)
 
-Under **Printers → Edit**, fill in the IP address, serial number and access code and tick *Live connection on*. The `printvault-mqtt` service re-reads the settings every minute; adding printers needs no restart.
+Under **Printers → Edit**, choose the model, fill in the IP address, serial number and access code and tick *Live connection on*. All Bambu Lab models speak the same MQTT protocol, so this also works for a model that is not in the list (*Other*). The `printvault-mqtt` service re-reads the settings every minute; adding printers needs no restart.
 
 - Connection: `mqtts://<ip>:8883`, user `bblp`, password = access code, TLS without certificate verification. Subscribe only on `device/<serial>/report`; nothing is sent to the printer.
 - `PREPARE`/`RUNNING` → print with status *Printing*; `FINISH` → *Succeeded* with end time and duration; `FAILED` → *Failed* with the printer's error code.
@@ -46,12 +46,30 @@ Under **Printers → Edit**, fill in the IP address, serial number and access co
 - AMS: at most one reading per unit per 10 minutes in `ams_readings` (humidity in % when the firmware sends `humidity_raw`, otherwise Bambu's level 1–5, plus temperature).
 - Log: `docker compose logs -f printvault-mqtt`
 
+## Supported models
+
+The model chosen under **Printers → Edit** decides the camera route. The rest of the live connection is the same for every model; fields a model does not send (a chamber temperature on the A1/P1, the aux fan on the A1, …) simply do not show.
+
+| Model | Camera | Status fields | Tested on hardware |
+|---|---|---|---|
+| P2S | RTSPS, port 322 | packed `device.*` temperatures, chamber, fans, speed, stage, AMS 2 Pro | **yes** (firmware of Nov 2026) |
+| X1, X1C, X1E | RTSPS, port 322 | `nozzle_temper`/`bed_temper`/`chamber_temper` as plain numbers (older firmware) or packed, `vt_tray` external spool | no |
+| H2D, H2D Pro, H2C | RTSPS, port 322 | both nozzles (current/target, active one marked), packed temperatures, `device.ctc` chamber | no |
+| H2S | RTSPS, port 322 | packed temperatures, `device.ctc` chamber | no |
+| P1P, P1S | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature | no |
+| A1, A1 mini | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature or aux/chamber fan | no |
+| Other | chosen by hand: RTSPS, JPEG stream or none | whatever the printer sends in the known formats | no |
+
+"No" means: built after the formats and protocol documented in [ha-bambulab](https://github.com/greghesp/ha-bambulab) (MIT; `pybambu/models.py` for the report fields and the camera split per model, `pybambu/bambu_client.py` for the port-6000 camera) and covered by tests with report fragments in those formats (`tests/test_models.py`), but never run against such a printer. Reports of what works or not are welcome. Printers from before the model list got their model once from the old free-text field (now *Details*); without a model the camera stays RTSPS, as before.
+
 ## Camera
 
-Printers with an IP address and access code (X1, P2S, H2D: RTSPS on port 322) get a camera image. *LAN live view* must be enabled on the printer.
+Printers with an IP address and access code get a camera image, over RTSPS on port 322 (X1, H2, P2 series) or the JPEG stream on port 6000 (A1, P1 series). *LAN live view* must be enabled on the printer (on the A1/P1 also called *LAN mode liveview*).
+
+- Port 6000: after a login packet (user `bblp`, access code) over TLS, the printer sends complete JPEGs, about one every 1–2 seconds; Printvault reads them in Python, without ffmpeg. The protocol comes from ha-bambulab (MIT), `ChamberImageThread` in `pybambu/bambu_client.py`. The live image therefore updates much more slowly than with RTSPS.
 
 - At the top of the home page: the **Live video** button on the camera image (and a button to open it in a new tab); under **Printers** the **Camera** link.
-- `/printers/<id>/camera.mjpg`: live image as MJPEG (± 5 fps, max. 1280 wide; adjustable with `CAMERA_FPS` and `CAMERA_WIDTH`). ffmpeg in the container converts the stream. There is one connection per printer, shared by all viewers. It stops 15 seconds after the last viewer leaves; a hidden tab also stops the stream.
+- `/printers/<id>/camera.mjpg`: live image as MJPEG (RTSPS: ± 5 fps, max. 1280 wide, adjustable with `CAMERA_FPS` and `CAMERA_WIDTH`, converted by ffmpeg in the container; port 6000: the printer's own images as they arrive). There is one connection per printer, shared by all viewers. It stops 15 seconds after the last viewer leaves; a hidden tab also stops the stream.
 - `/printers/<id>/snapshot.jpg`: a single image in full resolution. The image is kept ~20 s per printer (a failed attempt too), so several tabs do not put extra load on the printer; when the live stream is running, the image comes from there.
 - On the home page, the card of a print with status *Printing* without an own cover (a thumbnail does not count; it is the fallback when there is no camera image) shows the camera image (label *live*), refreshed every 30 s. When the listener reports that the print is no longer running, one last image follows (label *end*); after a reload the card shows the end photo the listener attached to the print.
 - When a print goes live to *Succeeded* or *Failed*, the listener attaches a camera photo (`camera-succeeded-…jpg` / `camera-failed-…jpg`). A cover you chose or an own photo added earlier stays the cover; a slicer/MakerWorld thumbnail is replaced by the camera photo (the thumbnail stays among the photos). If the image fails, that is logged and everything else carries on. An end the listener only notices after a restart gets no photo.

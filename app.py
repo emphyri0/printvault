@@ -17,6 +17,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 import bambu_errors
+import bambu_models
 import bambu_status
 import camera
 import icons
@@ -45,6 +46,7 @@ LABELS = {
     "adhesion": "Adhesion", "warping": "Warping", "spaghetti": "Spaghetti", "clog": "Clog",
     "power_loss": "Power loss", "other": "Other",
     **bambu_status.SPEED_PROFILES,
+    **bambu_models.LABELS,
 }
 
 app = Flask(__name__)
@@ -181,7 +183,9 @@ MIGRATIONS = {
                ("plate_count", "INTEGER"), ("nozzle_type", "TEXT"), ("speed_profile", "TEXT"),
                ("spaghetti_detection", "INTEGER"), ("first_layer_inspection", "INTEGER")],
     "printers": [("ip", "TEXT"), ("serial", "TEXT"), ("access_code", "TEXT"),
-                 ("mqtt_enabled", "INTEGER DEFAULT 0")],
+                 ("mqtt_enabled", "INTEGER DEFAULT 0"),
+                 # bambu_models.MODELS value; camera_type only counts for 'other' (rtsps / tcp6000 / none)
+                 ("bambu_model", "TEXT"), ("camera_type", "TEXT")],
 }
 
 
@@ -200,6 +204,12 @@ def init_db():
                         if "duplicate column" not in str(e):
                             raise
         db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
+        # Printers from before the model list: recognise the model in the free-text field
+        # (e.g. 'Bambu Lab P2S' → p2s). Only where nothing was chosen yet.
+        for pid, text in db.execute("SELECT id, model FROM printers WHERE bambu_model IS NULL").fetchall():
+            guess = bambu_models.guess_model(text)
+            if guess:
+                db.execute("UPDATE printers SET bambu_model = ? WHERE id = ? AND bambu_model IS NULL", (guess, pid))
         # Once: default maintenance tasks for printers that already exist (and have no tasks).
         if db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_seeded', '1')").rowcount:
             for (pid,) in db.execute("SELECT id FROM printers").fetchall():
@@ -355,6 +365,10 @@ COVER_SQL = f"""COALESCE(
     (SELECT f.stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
        ORDER BY {THUMB_SQL}, f.id
        LIMIT 1))"""
+# Whether the printer (alias pr) has a camera; same rules as bambu_models.printer_camera
+HAS_CAMERA_SQL = """(COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != ''
+    AND NOT (COALESCE(pr.bambu_model, '') = 'other' AND COALESCE(pr.camera_type, '') NOT IN ('rtsps', 'tcp6000')))"""
+
 # Colours of the AMS slots a print used (comma-separated, may be NULL)
 AMS_COLORS_SQL = "(SELECT GROUP_CONCAT(a.tray_color) FROM print_ams a WHERE a.print_id = p.id) AS ams_colors"
 
@@ -437,10 +451,11 @@ def filesize(size):
 @app.context_processor
 def inject_lists():
     db = get_db()
+    models = {"bambu_models": bambu_models.MODELS, "camera_types": bambu_models.CAMERA_TYPES}
     printers = db.execute("SELECT id, name FROM printers ORDER BY name").fetchall()
     return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
             "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES, "labels": LABELS,
-            "status_icons": icons.STATUS_ICONS, "maintenance_due": maintenance_due_total(db, printers)}
+            "status_icons": icons.STATUS_ICONS, "maintenance_due": maintenance_due_total(db, printers), **models}
 
 
 def maintenance_due_total(db, printers):
@@ -520,7 +535,7 @@ def index():
     fail = request.args.get("fail", "")
     nozzle = num(request.args.get("nozzle"))
     sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own_cover,
-                    (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera, {AMS_COLORS_SQL}
+                    {HAS_CAMERA_SQL} AS has_camera, {AMS_COLORS_SQL}
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
     if printer:
@@ -817,6 +832,10 @@ def printer_from_form(form):
     return {
         "name": form.get("name", "").strip(),
         "model": form.get("model", "").strip(),
+        "bambu_model": form.get("bambu_model") if form.get("bambu_model") in bambu_models.MODELS else None,
+        # only used for model 'other'; the other models have a fixed camera route
+        "camera_type": (form.get("camera_type") if form.get("bambu_model") == "other"
+                        and form.get("camera_type") in bambu_models.CAMERA_TYPES else None),
         "notes": form.get("notes", "").strip(),
         "ip": ip if IP_RE.match(ip) else "",
         "serial": re.sub(r"[^A-Za-z0-9]", "", form.get("serial", "")),
@@ -869,7 +888,8 @@ def printers():
     ).fetchall()
     db = get_db()
     due = {pr["id"]: sum(t["st"]["due"] for t in maintenance.tasks_for_printer(db, pr["id"])) for pr in rows}
-    return render_template("printers.html", printers=rows, due=due)
+    cams = {pr["id"]: bambu_models.printer_camera(pr) for pr in rows}
+    return render_template("printers.html", printers=rows, due=due, cams=cams)
 
 
 @app.route("/printers/new", methods=["GET", "POST"])
@@ -943,12 +963,12 @@ _snapshot_locks = {}
 _snapshot_locks_guard = threading.Lock()
 
 
-def cached_snapshot(printer_id, ip, access_code):
+def cached_snapshot(printer_id, ip, access_code, route=bambu_models.RTSPS):
     """JPEG from the printer: a fresh frame from a running live stream, else from the cache or fetched anew.
     Raises CameraError (also a cached one) when there is no image."""
-    url = camera.rtsp_url(ip, access_code)
+    url = (route, camera.rtsp_url(ip, access_code))
     cam = cameras.peek(printer_id)
-    if cam is not None and cam.url == url:
+    if cam is not None and cam.key == url:
         jpeg = cam.latest()
         if jpeg is not None:
             return jpeg
@@ -958,7 +978,7 @@ def cached_snapshot(printer_id, ip, access_code):
         hit = _snapshots.get(printer_id)
         if hit is None or hit[0] != url or time.monotonic() - hit[1] >= SNAPSHOT_CACHE_SECONDS:
             try:
-                result = camera.grab_snapshot(ip, access_code)
+                result = camera.grab_snapshot(ip, access_code, route=route)
             except camera.CameraError as e:
                 result = e
             hit = _snapshots[printer_id] = (url, time.monotonic(), result)
@@ -968,16 +988,18 @@ def cached_snapshot(printer_id, ip, access_code):
 
 
 def camera_printer(printer_id):
+    """(printer, camera route); 404 when the printer has no camera."""
     pr = get_printer(printer_id)
-    if not pr["ip"] or not pr["access_code"]:
+    route = bambu_models.printer_camera(pr)
+    if route is None:
         abort(404)
-    return pr
+    return pr, route
 
 
 @app.route("/printers/<int:printer_id>/camera.mjpg")
 def camera_stream(printer_id):
-    pr = camera_printer(printer_id)
-    cam = cameras.get(printer_id, pr["ip"], pr["access_code"])
+    pr, route = camera_printer(printer_id)
+    cam = cameras.get(printer_id, pr["ip"], pr["access_code"], route)
 
     def generate():
         for frame in cam.frames():
@@ -990,9 +1012,9 @@ def camera_stream(printer_id):
 
 @app.route("/printers/<int:printer_id>/snapshot.jpg")
 def camera_snapshot(printer_id):
-    pr = camera_printer(printer_id)
+    pr, route = camera_printer(printer_id)
     try:
-        jpeg = cached_snapshot(printer_id, pr["ip"], pr["access_code"])
+        jpeg = cached_snapshot(printer_id, pr["ip"], pr["access_code"], route)
     except camera.CameraError as e:
         return Response(str(e), status=502, mimetype="text/plain", headers={"Cache-Control": "no-store"})
     return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
@@ -1192,10 +1214,10 @@ def api_live():
                              (p["print_id"],)).fetchone()
             if row and row["cover"]:
                 p["cover"], p["own_cover"] = thumb_url(row["cover"], 1600), bool(row["own"])
-        pr = db.execute("SELECT photo, COALESCE(ip, '') != '' AND COALESCE(access_code, '') != '' AS cam "
-                        "FROM printers WHERE id = ?", (p.get("printer_id"),)).fetchone()
+        pr = db.execute("SELECT * FROM printers WHERE id = ?", (p.get("printer_id"),)).fetchone()
         p["printer_photo"] = thumb_url(pr["photo"], 1600) if pr and pr["photo"] else None
-        p["camera"] = bool(pr and pr["cam"])
+        p["camera"] = bool(pr and bambu_models.printer_camera(pr))
+        p["model"] = pr["bambu_model"] if pr else None
     return jsonify(data)
 
 

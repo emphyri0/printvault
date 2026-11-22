@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault{% endblock %}
+{% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault<script>
+  (function () {
+    var model = document.getElementById('bambu-model'), field = document.getElementById('camera-type-field');
+    function sync() { field.hidden = model.value !== 'other'; }
+    model.addEventListener('change', sync);
+    sync();
+  })();
+</script>
+{% endblock %}
 {% block content %}
 <a class="crumb" href="{{ url_for('printers') }}">{{ icon('back') }}Printers</a>
 <header class="dhead">
@@ -12,7 +20,20 @@
 </header>
 <form class="form" method="post" enctype="multipart/form-data">
   <label>Name *<input name="name" value="{{ pr.name or '' }}" required {% if not pr.id %}autofocus{% endif %} placeholder="e.g. Workshop printer"></label>
-  <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="e.g. P2S + AMS 2 Pro"></label>
+  <label>Model
+    <select name="bambu_model" id="bambu-model">
+      <option value="">– choose –</option>
+      {% for value, (text, cam) in bambu_models.items() %}<option value="{{ value }}" {% if value == pr.bambu_model %}selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select>
+    <small>Picks the camera route: RTSPS (X1, H2, P2S) or the JPEG stream on port 6000 (A1, P1).</small>
+  </label>
+  <label id="camera-type-field"{% if pr.bambu_model != 'other' %} hidden{% endif %}>Camera
+    <select name="camera_type">
+      {% for value, text in camera_types.items() %}<option value="{{ value }}" {% if value == (pr.camera_type or 'none') %}selected{% endif %}>{{ text }}</option>{% endfor %}
+    </select>
+    <small>For other models: which camera protocol the printer speaks. The live connection works the same.</small>
+  </label>
+  <label>Details<input name="model" value="{{ pr.model or '' }}" placeholder="e.g. + AMS 2 Pro, 0.4 hardened steel"></label>
   <label class="wide">Notes<textarea name="notes" rows="4" placeholder="Nozzles, purchase date, serial number, upgrades…">{{ pr.notes or '' }}</textarea></label>
   <fieldset class="wide">
     <legend>{{ icon('link') }}Live connection (Bambu Lab, read-only)</legend>
@@ -36,4 +57,12 @@
     <a class="btn ghost" href="{{ url_for('printers') }}">Cancel</a>
   </div>
 </form>
+<script>
+  (function () {
+    var model = document.getElementById('bambu-model'), field = document.getElementById('camera-type-field');
+    function sync() { field.hidden = model.value !== 'other'; }
+    model.addEventListener('change', sync);
+    sync();
+  })();
+</script>
 {% endblock %}
