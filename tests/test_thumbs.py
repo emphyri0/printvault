@@ -116,6 +116,11 @@ class MakeThumbs(unittest.TestCase):
 
 
 class Logic(unittest.TestCase):
+    def test_ffmpeg_present_when_required(self):
+        """CI sets REQUIRE_FFMPEG=1: then the ffmpeg tests above must run, not be skipped."""
+        if os.environ.get("REQUIRE_FFMPEG") == "1":
+            self.assertTrue(HAVE_FFMPEG, "REQUIRE_FFMPEG=1 but ffmpeg/ffprobe is not installed")
+
     def test_is_photo(self):
         self.assertTrue(thumbs.is_photo("0a1b.JPG"))
         self.assertTrue(thumbs.is_photo("x.gif"))

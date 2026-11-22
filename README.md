@@ -1,5 +1,10 @@
 # Printvault
 
+[![Tests](https://github.com/emphyri0/printvault/actions/workflows/tests.yml/badge.svg)](https://github.com/emphyri0/printvault/actions?workflow=tests.yml)
+<!-- GitHub badge: replace OWNER once the repository is on GitHub, then remove these comment markers.
+[![Tests](https://github.com/OWNER/printvault/actions/workflows/tests.yml/badge.svg)](https://github.com/OWNER/printvault/actions/workflows/tests.yml)
+-->
+
 A small web app to keep track of your 3D prints: photos, model files (3mf, stl, …), filament, print time, settings and notes.
 
 ## Features
@@ -109,6 +114,10 @@ Every photo gets two smaller WebP versions in `data/uploads/thumbs/`: 600 px wid
 - `/thumb/<600|1600>/<file>` serves the original as long as the thumbnail does not exist (yet), so a failed conversion (logged) never breaks a page.
 - Deleting a photo or a print also deletes its thumbnails. The folder can be deleted at any time; it is rebuilt at the next start.
 
+## Continuous integration
+
+Every push and pull request runs the tests: `.forgejo/workflows/tests.yml` (Forgejo Actions, runner label `docker`) and `.github/workflows/tests.yml` (GitHub Actions) with the same steps. Both run in a `python:3.12-slim` container (the Python of the Dockerfile), install ffmpeg and the requirements, and run `python -m unittest discover -s tests` with `REQUIRE_FFMPEG=1`.
+
 ## Data
 
 Everything is in `./data`: the SQLite database `printvault.db` and the uploads in `uploads/`. Back up that folder and you have everything.
@@ -123,7 +132,7 @@ python mqtt_listener.py           # second terminal; live status at http://127.0
 python -m unittest discover -s tests
 ```
 
-The thumbnail tests need ffmpeg and are skipped without it. To run everything in the image (with ffmpeg, no network):
+The thumbnail tests need ffmpeg and are skipped without it (with `REQUIRE_FFMPEG=1` they fail instead, as in CI). To run everything in the image (with ffmpeg, no network):
 
 ```bash
 docker run --rm --network none -u "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 -e DATA_DIR=/tmp/pvtest \
