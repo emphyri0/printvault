@@ -81,6 +81,44 @@
     return r.json();
   };
 
+  // "Open in Bambu Studio": the custom URL scheme of Bambu Studio (see bambu_studio_links in app.py).
+  // A browser cannot ask whether a scheme is installed. If the page keeps focus for 2.5 s (no app
+  // or dialog took over), fall back to a plain download of the 3MF. Phones have no Bambu Studio.
+  document.addEventListener("click", function (ev) {
+    const a = ev.target.closest && ev.target.closest("a[data-studio-mac]");
+    if (!a || ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+    ev.preventDefault();
+    const ua = navigator.userAgent;
+    const mac = /Macintosh|Mac OS X/.test(ua);
+    const mobile = /Android|iPhone|iPad|iPod|Mobile/.test(ua) || (mac && navigator.maxTouchPoints > 1);
+    const note = document.getElementById(a.dataset.note);
+    const download = () => {
+      if (note) note.hidden = false;
+      window.location.href = a.dataset.download;
+    };
+    if (mobile) { download(); return; }
+    const url = mac ? a.dataset.studioMac : a.href;
+    let left = false;
+    const mark = () => { left = true; };
+    window.addEventListener("blur", mark);
+    document.addEventListener("visibilitychange", mark);
+    if (/Firefox\//.test(ua)) {
+      // Firefox replaces the page with an error for an unknown scheme; a hidden frame keeps the page
+      const frame = document.createElement("iframe");
+      frame.hidden = true;
+      frame.src = url;
+      document.body.append(frame);
+      setTimeout(() => frame.remove(), 5000);
+    } else {
+      window.location.href = url;
+    }
+    setTimeout(() => {
+      window.removeEventListener("blur", mark);
+      document.removeEventListener("visibilitychange", mark);
+      if (!left && document.hasFocus()) download();
+    }, 2500);
+  });
+
   // Pages without their own live script still show the sidebar status (every 60 s)
   PV.boot = function () {
     if (PV.ownsLive) return;

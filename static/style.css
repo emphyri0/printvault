@@ -243,6 +243,8 @@ a.card:hover .media img{transform:scale(1.04)}
 .tags a{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:99px;background:var(--surface);text-decoration:none;font-size:13px}
 .tags a:hover{background:var(--surface2)} .tags .ico{width:13px;height:13px;color:var(--muted)}
 .links{display:flex;flex-wrap:wrap;gap:8px}
+.again{display:grid;gap:10px;padding:14px;border-radius:var(--r);background:var(--surface)}
+.again h2{font-size:15px}
 .notes{white-space:pre-wrap;overflow-wrap:anywhere}
 .livebox{display:grid;gap:10px;padding:14px;border-radius:var(--r);background:var(--surface)}
 .livebox .temp{background:var(--surface2)}

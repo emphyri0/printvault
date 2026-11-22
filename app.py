@@ -5,6 +5,7 @@ import re
 import sqlite3
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import closing
@@ -646,9 +647,31 @@ def show_print(print_id):
                 r["stage"], bambu_status.stage_text(r["stage"]) if r["stage"] is not None else None,
                 bambu_status.stage_group(r["stage"]) if r["stage"] is not None else None, r["percent"], r["layer"]]
                for r in db.execute("SELECT * FROM print_samples WHERE print_id = ? ORDER BY recorded_at", (print_id,))]
+    models = [f for f in files if f["kind"] == "model"]
+    threemf = [f for f in models if f["original_name"].lower().endswith(".3mf")]
     return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams, samples=samples,
-                           photos=[f for f in files if f["kind"] == "photo"],
-                           models=[f for f in files if f["kind"] == "model"])
+                           photos=[f for f in files if f["kind"] == "photo"], models=models,
+                           studio=bambu_studio_links(threemf[-1]) if threemf else None,
+                           makerworld_url=p["source_url"] if MW_URL.match(p["source_url"] or "") else None)
+
+
+def bambu_studio_links(f):
+    """Links that open a 3MF file in Bambu Studio, which then downloads it from Printvault itself.
+
+    The schemes come from Bambu Studio's own source (src/slic3r/GUI/GUI_App.cpp):
+      - Windows/Linux: bambustudio://open?file=<url>   (GUI_App::post_init, extract_model_download_url_from_open)
+      - macOS:         bambustudioopen://<url>          (GUI_App::MacOpenURL, extract_model_download_url_from_mac)
+    Bambu Studio URL-decodes the whole link and downloads the URL with http(s). The file name comes from a
+    '&name=<file>.3mf' suffix (Plater::import_model_id) and must end in .3mf; /download/<id> has no
+    extension, so the name is always added. Hosts other than MakerWorld's get a "not from a trusted site,
+    open anyway?" question in Bambu Studio. Nothing is sent to the printer.
+    """
+    name = secure_filename(f["original_name"] or "")
+    if not name.lower().endswith(".3mf"):
+        name = f"printvault-{f['id']}.3mf"
+    target = urllib.parse.quote(f"{url_for('download', file_id=f['id'], _external=True)}&name={name}", safe="")
+    return {"file": f, "download": url_for("download", file_id=f["id"]),
+            "open": f"bambustudio://open?file={target}", "mac": f"bambustudioopen://{target}"}
 
 
 @app.route("/print/<int:print_id>/edit", methods=["GET", "POST"])

@@ -75,7 +75,21 @@
       {% if p.designer %}<div class="spec"><dt>{{ icon('user') }}Designer</dt><dd>{{ p.designer }}</dd></div>{% endif %}
       {% if p.license %}<div class="spec"><dt>{{ icon('file') }}Licence</dt><dd>{{ p.license }}</dd></div>{% endif %}
     </dl>
-    {% if p.source_url %}<div class="links"><a class="btn" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">{{ icon('external') }}<span>View source</span></a></div>{% endif %}
+    {% if studio or makerworld_url %}
+    <section class="again" aria-labelledby="again-title">
+      <h2 id="again-title">Print again</h2>
+      <div class="actions">
+        {% if studio %}<a class="btn primary" href="{{ studio.open }}" data-studio-mac="{{ studio.mac }}" data-download="{{ studio.download }}" data-note="studio-note"
+          title="Opens {{ studio.file.original_name }} in Bambu Studio on this computer">{{ icon('repeat') }}<span>Open in Bambu Studio</span></a>{% endif %}
+        {% if makerworld_url %}<a class="btn" href="{{ makerworld_url }}" target="_blank" rel="noopener noreferrer">{{ icon('external') }}<span>Open on MakerWorld</span></a>{% endif %}
+      </div>
+      {% if studio %}
+      <p class="hint">Bambu Studio downloads <span class="num">{{ studio.file.original_name }}</span> from Printvault and asks once whether to open a file from this site. Nothing is sent to the printer. <a class="link" href="{{ studio.download }}">Download the 3MF</a> instead.</p>
+      <p class="hint" id="studio-note" role="status" hidden>Bambu Studio did not open, so the 3MF is downloaded instead.</p>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% if p.source_url and not makerworld_url %}<div class="links"><a class="btn" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">{{ icon('external') }}<span>View source</span></a></div>{% endif %}
     {% if p.tags %}<p class="tags" aria-label="Tags">{% for t in p.tags.split(",") if t.strip() %}<a href="{{ url_for('index', q=t.strip()) }}">{{ icon('tag') }}{{ t.strip() }}</a>{% endfor %}</p>{% endif %}
   </div>
 </div>

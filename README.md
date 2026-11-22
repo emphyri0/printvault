@@ -94,6 +94,13 @@ docker compose up -d --build
 
 The app then runs at http://<vm-ip>:8100. It is also reachable via Tailscale.
 
+## Print again
+
+On the detail page of a print, under **Print again** (Printvault itself never sends anything to the printer, so it can stay in cloud mode):
+
+- **Open in Bambu Studio** (only when the print has a 3MF file; the newest one is used): opens the file through Bambu Studio's own URL scheme, `bambustudio://open?file=<url>` on Windows and Linux and `bambustudioopen://<url>` on macOS (both taken from Bambu Studio's source, `src/slic3r/GUI/GUI_App.cpp`). Bambu Studio then downloads the 3MF from Printvault itself, so the computer must be able to reach Printvault at the address in the browser. Because Printvault is not a MakerWorld host, Bambu Studio first asks whether to open a file from this site. When Bambu Studio does not open within 2.5 seconds (not installed, or a phone), the 3MF is downloaded instead.
+- **Open on MakerWorld** (only for prints with a MakerWorld link): opens the model page, from where you can print with the Bambu Handy app on a phone.
+
 ## Design
 
 Plain HTML, CSS and JavaScript: no framework, no build step, no requests to other sites.

@@ -151,6 +151,37 @@ class PagesTest(unittest.TestCase):
         self.assertIn('src="/uploads/p2.gif"', html)             # a GIF cover keeps its animation on the detail page
         self.assertNotIn("chart.js", self.get("/print/2"))
 
+    def test_print_again_buttons(self):
+        html = self.get("/print/1")
+        # Bambu Studio scheme (Windows/Linux) and the macOS variant; the download URL is absolute and gets
+        # a '&name=…3mf' suffix, everything URL-encoded
+        target = "http%3A%2F%2Flocalhost%2Fdownload%2F11%26name%3Dboat.3mf"
+        self.assertIn(f'href="bambustudio://open?file={target}"', html)
+        self.assertIn(f'data-studio-mac="bambustudioopen://{target}"', html)
+        self.assertIn('data-download="/download/11"', html)
+        self.assertNotIn("Open on MakerWorld", html)
+        # only a MakerWorld link: no Studio button, a MakerWorld button instead of "View source"
+        with ml.connect_db(app.DB_PATH) as db:
+            db.execute("UPDATE prints SET source_url = 'https://makerworld.com/en/models/123-boat' WHERE id = 2")
+            db.execute("UPDATE prints SET source_url = 'https://www.printables.com/model/1' WHERE id = 3")
+            db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (3, 'model', 'v.stl', 'v.stl')")
+        html = self.get("/print/2")
+        self.assertIn('href="https://makerworld.com/en/models/123-boat" target="_blank" rel="noopener noreferrer"', html)
+        self.assertIn("Open on MakerWorld", html)
+        self.assertNotIn("bambustudio", html)
+        self.assertNotIn("View source", html)
+        html = self.get("/print/3")                                   # stl + other source: neither button
+        self.assertNotIn("Print again", html)
+        self.assertIn("View source", html)
+
+    def test_studio_link_name(self):
+        with app.app.test_request_context("/", base_url="https://printvault.example"):
+            links = app.bambu_studio_links({"id": 7, "original_name": "my model (v2).gcode.3mf"})
+            self.assertEqual(links["open"], "bambustudio://open?file=https%3A%2F%2Fprintvault.example%2Fdownload%2F7"
+                                            "%26name%3Dmy_model_v2.gcode.3mf")
+            self.assertTrue(app.bambu_studio_links({"id": 8, "original_name": "日本.3mf"})["open"]
+                            .endswith("%26name%3Dprintvault-8.3mf"))
+
     def test_thumb_route(self):
         os.makedirs(os.path.join(app.UPLOAD_DIR, thumbs.SUBDIR), exist_ok=True)
         with open(os.path.join(app.UPLOAD_DIR, "p1.jpg"), "wb") as fh:
