@@ -84,6 +84,30 @@ class PostTest(unittest.TestCase):
         self.assertNotIn("tk_geheim", str(cm.exception))
 
 
+class HttpErrorTest(unittest.TestCase):
+    def fail_with(self, code, body):
+        import io
+        import urllib.error
+        return FakeUrlopen(fail=urllib.error.HTTPError("http://x", code, "Bad Request", {}, io.BytesIO(body)))
+
+    def post(self, f):
+        with self.assertRaises(notify.NotifyError) as cm:
+            notify.post({"ntfy_url": "http://x", "ntfy_topic": "a"}, "T", "M", urlopen=f)
+        return str(cm.exception)
+
+    def test_ntfy_json_error_shown(self):
+        msg = self.post(self.fail_with(400, b'{"code":40009,"http":400,"error":"invalid request: topic invalid"}'))
+        self.assertEqual(msg, "ntfy-melding versturen mislukt: HTTP 400: invalid request: topic invalid (ntfy-code 40009)")
+
+    def test_non_ntfy_body_shown(self):
+        msg = self.post(self.fail_with(400, b"<html><body>Bad\n  Request</body></html>"))
+        self.assertIn("HTTP 400: <html><body>Bad Request</body></html>", msg)
+        self.assertIn("ntfy-server", msg)
+
+    def test_empty_body(self):
+        self.assertEqual(self.post(self.fail_with(400, b"")), "ntfy-melding versturen mislukt: HTTP 400 Bad Request")
+
+
 class NotifierTest(unittest.TestCase):
     def setUp(self):
         fresh_db()

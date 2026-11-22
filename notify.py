@@ -8,6 +8,7 @@ import logging
 import re
 import sqlite3
 import threading
+import urllib.error
 import urllib.request
 from contextlib import closing
 
@@ -57,8 +58,28 @@ def post(cfg, title, message, tags=(), priority=None, urlopen=None, timeout=10):
     try:
         with (urlopen or urllib.request.urlopen)(req, timeout=timeout) as resp:
             resp.read(4096)
-    except Exception as e:   # HTTPError, URLError, timeout, …
+    except urllib.error.HTTPError as e:
+        raise NotifyError(f"ntfy-melding versturen mislukt: HTTP {e.code}{_reason(e)}") from None
+    except Exception as e:   # URLError, timeout, …
         raise NotifyError(f"ntfy-melding versturen mislukt: {e}") from None
+
+
+def _reason(err):
+    """De foutreden uit het antwoord van de server. ntfy antwoordt met JSON zoals
+    {"code": 40009, "http": 400, "error": "…"}; een andere server met tekst of HTML."""
+    try:
+        body = err.read(2048).decode("utf-8", "replace").strip()
+    except Exception:
+        return f" {err.reason}" if getattr(err, "reason", None) else ""
+    try:
+        data = json.loads(body)
+        if isinstance(data, dict) and data.get("error"):
+            code = f" (ntfy-code {data['code']})" if data.get("code") else ""
+            return f": {str(data['error'])[:300]}{code}"
+    except ValueError:
+        pass
+    text = " ".join(body.split())[:200]
+    return f": {text} — antwoordt hier wel een ntfy-server?" if text else f" {err.reason}"
 
 
 class Notifier:
