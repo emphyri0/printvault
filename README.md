@@ -28,8 +28,6 @@ Internal values are lowercase snake_case; the UI shows them through a label mapp
 
 Dates are shown as `22 Nov 2026` and times as `22 Nov 2026, 16:42` (24-hour clock).
 
-Upgrading from the Dutch version: on start-up, `init_db()` migrates the old Dutch values (status, fail reason, speed profile, nozzle type, material "Ander", the listener's own sentences in the notes, and maintenance tasks that still have their Dutch default name). The migration only touches the old values, so running it again changes nothing. Names and notes you wrote yourself stay as they are. The old URLs `/instellingen` and `/printers/<id>/onderhoud` redirect to `/settings` and `/printers/<id>/maintenance`.
-
 ## Live connection (MQTT)
 
 Under **Printers → Edit**, fill in the IP address, serial number and access code and tick *Live connection on*. The `printvault-mqtt` service re-reads the settings every minute; adding printers needs no restart.
@@ -50,7 +48,7 @@ Printers with an IP address and access code (X1, P2S, H2D: RTSPS on port 322) ge
 - `/printers/<id>/camera.mjpg`: live image as MJPEG (± 5 fps, max. 1280 wide; adjustable with `CAMERA_FPS` and `CAMERA_WIDTH`). ffmpeg in the container converts the stream. There is one connection per printer, shared by all viewers. It stops 15 seconds after the last viewer leaves; a hidden tab also stops the stream.
 - `/printers/<id>/snapshot.jpg`: a single image in full resolution. The image is kept ~20 s per printer (a failed attempt too), so several tabs do not put extra load on the printer; when the live stream is running, the image comes from there.
 - On the home page, the card of a print with status *Printing* without an own cover (a thumbnail does not count; it is the fallback when there is no camera image) shows the camera image (label *live*), refreshed every 30 s. When the listener reports that the print is no longer running, one last image follows (label *end*); after a reload the card shows the end photo the listener attached to the print.
-- When a print goes live to *Succeeded* or *Failed*, the listener attaches a camera photo (`camera-succeeded-…jpg` / `camera-failed-…jpg`; photos from the Dutch version keep their old names). A cover you chose or an own photo added earlier stays the cover; a slicer/MakerWorld thumbnail is replaced by the camera photo (the thumbnail stays among the photos). If the image fails, that is logged and everything else carries on. An end the listener only notices after a restart gets no photo.
+- When a print goes live to *Succeeded* or *Failed*, the listener attaches a camera photo (`camera-succeeded-…jpg` / `camera-failed-…jpg`). A cover you chose or an own photo added earlier stays the cover; a slicer/MakerWorld thumbnail is replaced by the camera photo (the thumbnail stays among the photos). If the image fails, that is logged and everything else carries on. An end the listener only notices after a restart gets no photo.
 - The access code never ends up in logs or error messages.
 
 ## Status card and time series

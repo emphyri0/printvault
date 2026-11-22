@@ -21,15 +21,6 @@ DEFAULT_TASKS = [
     ("Lubricate Z lead screws and guides", 200, 90),
     ("Replace exhaust filter (HEPA/activated carbon)", 500, 180),
 ]
-# Default names of the Dutch version → English (used by the database migration; a task
-# the user renamed keeps its name).
-LEGACY_DEFAULT_NAMES = {
-    "Plaat reinigen (water en afwasmiddel)": DEFAULT_TASKS[0][0],
-    "Nozzle controleren en reinigen": DEFAULT_TASKS[1][0],
-    "Carbon rods / rails reinigen": DEFAULT_TASKS[2][0],
-    "Z-spindels en geleiders smeren": DEFAULT_TASKS[3][0],
-    "Exhaust-filter (HEPA/actieve kool) vervangen": DEFAULT_TASKS[4][0],
-}
 
 
 def now_local():

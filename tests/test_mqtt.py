@@ -280,45 +280,6 @@ class AppTest(unittest.TestCase):
             row = db.execute("SELECT serial, access_code, mqtt_enabled FROM printers").fetchone()
         self.assertEqual(tuple(row), ("00M00A000000000", "secret12", 1))
 
-    def test_migrates_dutch_records(self):
-        """Records from the Dutch version get the English internal values; running it again changes nothing.
-        The Dutch values below are the input of the migration, so they have to stay Dutch."""
-        missed = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
-        with ml.connect_db(app.DB_PATH) as db:
-            db.executemany("INSERT INTO prints (name, status, source, notes, fail_reason, speed_profile, nozzle_type, "
-                           "material) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
-                ("missed", "opnieuw", "mqtt", missed, None, "Standaard", "Gehard staal (HS01)", "PLA"),
-                ("deliberate", "opnieuw", None, "Kleur klopte niet", None, None, None, "Ander"),
-                ("ok", "gelukt", "mqtt", "Start niet live gezien: listener startte tijdens de print, starttijd en duur "
-                 "zijn bij benadering.\nFilament (slicer): PLA #FFFFFF", None, "Stil", "Gehard staal, high-flow (HH01)", "PLA"),
-                ("bad", "mislukt", None, "", "stroomuitval", "Ludicrous", "Roestvrij staal (HS00)", "PETG"),
-                ("plan", "gepland", None, "", "verstopping", None, "Eigen nozzle", "PLA"),
-                ("busy", "bezig", "mqtt", "", None, None, None, "PLA")])
-            pid = db.execute("INSERT INTO printers (name) VALUES ('P2S')").lastrowid
-            db.executemany("INSERT INTO maintenance_tasks (printer_id, name, interval_hours) VALUES (?, ?, 25)",
-                           [(pid, "Plaat reinigen (water en afwasmiddel)"), (pid, "Plaat reinigen (eigen manier)")])
-        app.init_db()
-        with ml.connect_db(app.DB_PATH) as db:
-            first = [tuple(r) for r in db.execute("SELECT * FROM prints ORDER BY id")]
-            tasks = [r[0] for r in db.execute("SELECT name FROM maintenance_tasks ORDER BY id")]
-        app.init_db()                             # idempotent
-        with ml.connect_db(app.DB_PATH) as db:
-            rows = db.execute("SELECT * FROM prints ORDER BY id").fetchall()
-        self.assertEqual([tuple(r) for r in rows], first)
-        cols = ("name", "status", "fail_reason", "speed_profile", "nozzle_type", "material")
-        self.assertEqual([tuple(r[c] for c in cols) for r in rows], [
-            ("missed", "unknown", None, "standard", "Hardened steel (HS01)", "PLA"),
-            ("deliberate", "reprint", None, None, None, "Other"),
-            ("ok", "succeeded", None, "silent", "Hardened steel, high-flow (HH01)", "PLA"),
-            ("bad", "failed", "power_loss", "ludicrous", "Stainless steel (HS00)", "PETG"),
-            ("plan", "planned", "clog", None, "Eigen nozzle", "PLA"),       # own text stays
-            ("busy", "printing", None, None, None, "PLA")])
-        self.assertEqual(rows[0]["notes"], "End not observed (listener was not connected). Check the status yourself.")
-        self.assertEqual(rows[1]["notes"], "Kleur klopte niet")             # the user's own note stays
-        self.assertEqual(rows[2]["notes"], "Start not seen live: the listener started during the print, start time "
-                                           "and duration are approximate.\nFilament (slicer): PLA #FFFFFF")
-        self.assertEqual(tasks, ["Clean build plate (water and dish soap)", "Plaat reinigen (eigen manier)"])
-
     def test_status_filter_has_unknown(self):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO prints (name, status) VALUES ('a', 'unknown'), ('b', 'succeeded')")

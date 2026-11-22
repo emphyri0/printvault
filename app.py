@@ -175,52 +175,11 @@ def init_db():
                         if "duplicate column" not in str(e):
                             raise
         db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
-        migrate_legacy(db)
         # Once: default maintenance tasks for printers that already exist (and have no tasks).
         if db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_seeded', '1')").rowcount:
             for (pid,) in db.execute("SELECT id FROM printers").fetchall():
                 if not db.execute("SELECT 1 FROM maintenance_tasks WHERE printer_id = ?", (pid,)).fetchone():
                     maintenance.seed_defaults(db, pid)
-
-
-# ---------- Migration from the Dutch version (idempotent: only touches old Dutch values) ----------
-
-LEGACY_STATUSES = {"gepland": "planned", "bezig": "printing", "gelukt": "succeeded", "mislukt": "failed",
-                   "onbekend": "unknown", "opnieuw": "reprint"}
-LEGACY_FAIL_REASONS = {"hechting": "adhesion", "warping": "warping", "spaghetti": "spaghetti",
-                       "verstopping": "clog", "stroomuitval": "power_loss", "anders": "other"}
-LEGACY_SPEED_PROFILES = {"Stil": "silent", "Standaard": "standard", "Sport": "sport", "Ludicrous": "ludicrous"}
-LEGACY_NOZZLE_TYPES = [("Roestvrij staal", "Stainless steel"), ("Gehard staal", "Hardened steel"),
-                       ("Wolfraamcarbide", "Tungsten carbide")]
-# Sentences the listener used to write into the notes.
-LEGACY_NOTES = {
-    "Start niet live gezien: listener startte tijdens de print, starttijd en duur zijn bij benadering.":
-        "Start not seen live: the listener started during the print, start time and duration are approximate.",
-    "Einde niet live gezien: eindtijd is het moment waarop de listener startte.":
-        "End not seen live: the end time is when the listener started.",
-    "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf.":
-        "End not observed (listener was not connected). Check the status yourself.",
-}
-
-
-def migrate_legacy(db):
-    # Older: prints the listener set to 'opnieuw' because it missed the end become 'unknown'.
-    db.execute("UPDATE prints SET status = 'onbekend' WHERE status = 'opnieuw' AND source = 'mqtt' "
-               "AND notes LIKE '%Einde niet waargenomen%'")
-    for old, new in LEGACY_STATUSES.items():
-        db.execute("UPDATE prints SET status = ? WHERE status = ?", (new, old))
-    for old, new in LEGACY_FAIL_REASONS.items():
-        db.execute("UPDATE prints SET fail_reason = ? WHERE fail_reason = ?", (new, old))
-    for old, new in LEGACY_SPEED_PROFILES.items():
-        db.execute("UPDATE prints SET speed_profile = ? WHERE speed_profile = ?", (new, old))
-    db.execute("UPDATE prints SET material = 'Other' WHERE material = 'Ander'")
-    for old, new in LEGACY_NOZZLE_TYPES:   # e.g. 'Gehard staal, high-flow (HH01)' → 'Hardened steel, high-flow (HH01)'
-        db.execute("UPDATE prints SET nozzle_type = ? || substr(nozzle_type, ?) WHERE nozzle_type LIKE ?",
-                   (new, len(old) + 1, old + "%"))
-    for old, new in LEGACY_NOTES.items():
-        db.execute("UPDATE prints SET notes = replace(notes, ?, ?) WHERE instr(notes, ?) > 0", (old, new, old))
-    for old, new in maintenance.LEGACY_DEFAULT_NAMES.items():   # only names that are still the Dutch default
-        db.execute("UPDATE maintenance_tasks SET name = ? WHERE name = ?", (new, old))
 
 
 def ext_of(filename):
@@ -358,7 +317,7 @@ def save_uploads(print_id, uploads):
 
 
 # Automatic thumbnails (from the slicer or MakerWorld); everything else is a real photo.
-# 'thumbnail-plaat-' is the name older versions used.
+# 'thumbnail-plaat-' is the name older versions gave slicer thumbnails; existing files still carry it.
 THUMB_SQL = ("(f.original_name LIKE 'thumbnail-plate-%' OR f.original_name LIKE 'thumbnail-plaat-%' "
              "OR f.original_name LIKE 'makerworld-cover.%')")
 # Cover photo: the chosen photo, else the first real photo, else a slicer/MakerWorld thumbnail.
@@ -1043,17 +1002,6 @@ def settings_test():
     except notify.NotifyError as e:
         flash(str(e), "warn")
     return redirect(url_for("settings"))
-
-
-# Old Dutch URLs (bookmarks) keep working.
-@app.route("/instellingen")
-def legacy_settings():
-    return redirect(url_for("settings"), 301)
-
-
-@app.route("/printers/<int:printer_id>/onderhoud")
-def legacy_maintenance(printer_id):
-    return redirect(url_for("printer_maintenance", printer_id=printer_id), 301)
 
 
 # ---------- Live status (from the MQTT listener) ----------

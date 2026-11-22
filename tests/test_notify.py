@@ -366,11 +366,6 @@ class PagesTest(unittest.TestCase):
             self.assertIsNone(db.execute("SELECT 1 FROM maintenance_tasks WHERE id = ?", (t["id"],)).fetchone())
         self.assertEqual(self.c.get("/maintenance/999/edit").status_code, 404)
 
-    def test_old_dutch_urls_redirect(self):
-        self.assertEqual(self.c.get("/instellingen").headers["Location"], "/settings")
-        self.assertEqual(self.c.get(f"/printers/{self.pid}/onderhoud").headers["Location"],
-                         f"/printers/{self.pid}/maintenance")
-
     def test_tasks_removed_with_printer(self):
         self.c.post(f"/printers/{self.pid}/maintenance/defaults")
         self.c.post(f"/printers/{self.pid}/delete")
