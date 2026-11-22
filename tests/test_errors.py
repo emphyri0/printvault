@@ -112,10 +112,29 @@ class GeneratorTest(unittest.TestCase):
                                        "https://wiki.bambulab.com/en/p2s/troubleshooting/hmscode/0300_0100_0001_0007"})
         self.assertEqual(gen.build(nl, en, wiki, "X1C")["print_errors"]["0300-1111"], "Algemeen")
 
+    def test_stage_table_read_without_executing(self):
+        src = (
+            "import os\nos.system('echo NIET UITVOEREN')\n"
+            "CURRENT_STAGE_IDS = {\n    'default': 'unknown',\n    0: 'printing',\n    54: 'waiting',\n    -1: 'idle',\n}\n"
+            "OTHER = {1: 'x'}\n")
+        ids = gen.literal_dict(src, "CURRENT_STAGE_IDS")
+        self.assertEqual(ids, {"default": "unknown", 0: "printing", 54: "waiting", -1: "idle"})
+        tr = {"entity": {"sensor": {"stage": {"state": {"printing": "Aan het printen"}}}}}
+        tr_en = {"entity": {"sensor": {"stage": {"state": {"printing": "Printing", "waiting": "Waiting"}}}}}
+        self.assertEqual(gen.build_stages(ids, tr, tr_en), {
+            "0": {"key": "printing", "en": "Printing", "nl": "Aan het printen"},
+            "54": {"key": "waiting", "en": "Waiting", "nl": None},
+            "-1": {"key": "idle", "en": None, "nl": None}})
+        call_with_func = "CURRENT_STAGE_IDS = dict(a=1)\n"
+        with self.assertRaises(ValueError):
+            gen.literal_dict(call_with_func, "CURRENT_STAGE_IDS")
+
     def test_data_file_matches_generator_format(self):
         with open(be.DATA_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
-        self.assertEqual(set(data), {"print_errors", "hms", "wiki", "_source"})
+        self.assertEqual(set(data), {"print_errors", "hms", "wiki", "stages", "_source"})
+        self.assertEqual(data["stages"]["0"]["key"], "printing")
+        self.assertTrue(all(k.lstrip("-").isdigit() and v["key"] for k, v in data["stages"].items()))
         self.assertTrue(all(len(k) == 9 for k in data["print_errors"]))
         self.assertTrue(all(len(k) == 19 for k in data["hms"]))
         self.assertTrue(all(u.startswith("https://wiki.bambulab.com/en/") for u in data["wiki"].values()))

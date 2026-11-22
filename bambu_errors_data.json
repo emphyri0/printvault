@@ -5,9 +5,12 @@
   "files": [
    "scripts/hms_error_text/hms_nl.json",
    "scripts/hms_error_text/hms_en.json",
-   "scripts/hms_error_text/wiki_links.json"
+   "scripts/hms_error_text/wiki_links.json",
+   "custom_components/bambu_lab/pybambu/const.py (CURRENT_STAGE_IDS)",
+   "custom_components/bambu_lab/translations/nl.json",
+   "custom_components/bambu_lab/translations/en.json"
   ],
-  "generated": "2026-11-22T09:25:07+00:00",
+  "generated": "2026-11-22T12:21:27+00:00",
   "generator": "scripts/update_bambu_errors.py",
   "lang": "nl",
   "license": "MIT (ha-bambulab contributors); teksten van Bambu Lab (e.bambulab.com)",
@@ -7834,6 +7837,413 @@
   "2AFD-8012": "Kan de mappingtabel niet krijgen; selecteer 'Hervatten' om het opnieuw te proberen.",
   "2AFE-8012": "Kan de mappingtabel niet krijgen; selecteer 'Hervatten' om het opnieuw te proberen.",
   "2AFF-8012": "Kan de mappingtabel niet krijgen; selecteer 'Hervatten' om het opnieuw te proberen."
+ },
+ "stages": {
+  "-1": {
+   "en": "Idle",
+   "key": "idle",
+   "nl": "Inactief"
+  },
+  "0": {
+   "en": "Printing",
+   "key": "printing",
+   "nl": "Aan het printen"
+  },
+  "1": {
+   "en": "Auto bed leveling",
+   "key": "auto_bed_leveling",
+   "nl": "Automatische bed leveling"
+  },
+  "10": {
+   "en": "Inspecting first layer",
+   "key": "inspecting_first_layer",
+   "nl": "Eerste laag aan het inspecteren"
+  },
+  "11": {
+   "en": "Identifying build plate type",
+   "key": "identifying_build_plate_type",
+   "nl": "Build plate-type aan het identificeren"
+  },
+  "12": {
+   "en": "Calibrating micro lidar",
+   "key": "calibrating_micro_lidar",
+   "nl": "Micro-lidar aan het kalibreren"
+  },
+  "13": {
+   "en": "Homing toolhead",
+   "key": "homing_toolhead",
+   "nl": "Toolhead aan het homen"
+  },
+  "14": {
+   "en": "Cleaning nozzle tip",
+   "key": "cleaning_nozzle_tip",
+   "nl": "Nozzle-punt aan het reinigen"
+  },
+  "15": {
+   "en": "Checking extruder temperature",
+   "key": "checking_extruder_temperature",
+   "nl": "Extruder-temperatuur aan het controleren"
+  },
+  "16": {
+   "en": "Paused by user",
+   "key": "paused_user",
+   "nl": "Printen gepauzeerd door gebruiker"
+  },
+  "17": {
+   "en": "Paused: front cover",
+   "key": "paused_front_cover_falling",
+   "nl": "Gepauzeerd omdat het beschermkapje van de voorkant is gevallen"
+  },
+  "18": {
+   "en": "Calibrating micro lidar",
+   "key": "calibrating_micro_lidar",
+   "nl": "Micro-lidar aan het kalibreren"
+  },
+  "19": {
+   "en": "Calibrating extrusion flow",
+   "key": "calibrating_extrusion_flow",
+   "nl": "Extrusie-flow aan het kalibreren"
+  },
+  "2": {
+   "en": "Heatbed preheating",
+   "key": "heatbed_preheating",
+   "nl": "Heatbed aan het voorverwarmen"
+  },
+  "20": {
+   "en": "Paused: nozzle temp malfunction",
+   "key": "paused_nozzle_temperature_malfunction",
+   "nl": "Gepauzeerd vanwege storing met de nozzle-temperatuur"
+  },
+  "21": {
+   "en": "Paused: bed temp malfunction",
+   "key": "paused_heat_bed_temperature_malfunction",
+   "nl": "Gepauzeerd vanwege storing in de temperatuur van het heat bed"
+  },
+  "22": {
+   "en": "Filament unloading",
+   "key": "filament_unloading",
+   "nl": "Ontladen van filament"
+  },
+  "23": {
+   "en": "Paused: skipped steps",
+   "key": "paused_skipped_step",
+   "nl": "Gepauzeerd vanwege overslaan van stappen"
+  },
+  "24": {
+   "en": "Filament loading",
+   "key": "filament_loading",
+   "nl": "Laden van filament"
+  },
+  "25": {
+   "en": "Calibrating motor noise",
+   "key": "calibrating_motor_noise",
+   "nl": "Motorlawaai aan het kalibreren"
+  },
+  "255": {
+   "en": "Idle",
+   "key": "idle",
+   "nl": "Inactief"
+  },
+  "26": {
+   "en": "Paused: AMS lost",
+   "key": "paused_ams_lost",
+   "nl": "Gepauzeerd vanwege verloren verbinding met de AMS"
+  },
+  "27": {
+   "en": "Paused: low heatbreak fan",
+   "key": "paused_low_fan_speed_heat_break",
+   "nl": "Gepauzeerd vanwege lage heat-break-ventilatorsnelheid"
+  },
+  "28": {
+   "en": "Paused: chamber temp error",
+   "key": "paused_chamber_temperature_control_error",
+   "nl": "Gepauzeerd vanwege kamertemperatuurbedieningsfout"
+  },
+  "29": {
+   "en": "Cooling chamber",
+   "key": "cooling_chamber",
+   "nl": "Kamer aan het koelen"
+  },
+  "3": {
+   "en": "Sweeping XY mech mode",
+   "key": "sweeping_xy_mech_mode",
+   "nl": "Sweeping XY mech-modus"
+  },
+  "30": {
+   "en": "Paused: G-code instruction",
+   "key": "paused_user_gcode",
+   "nl": "Gepauzeerd vanwege door aan de gcode toegevoegde pauzeer-instructie"
+  },
+  "31": {
+   "en": "Motor noise show off",
+   "key": "motor_noise_showoff",
+   "nl": "Motorlawaai showoff"
+  },
+  "32": {
+   "en": "Paused: nozzle covered",
+   "key": "paused_nozzle_filament_covered_detected",
+   "nl": "Gepauzeerd: filament op de nozzle gedetecteerd"
+  },
+  "33": {
+   "en": "Paused: cutter error",
+   "key": "paused_cutter_error",
+   "nl": "Gepauzeerd vanwege een fout met de filamentsnijder"
+  },
+  "34": {
+   "en": "Paused: first layer error",
+   "key": "paused_first_layer_error",
+   "nl": "Gepauzeerd vanwege een fout met de eerste laag"
+  },
+  "35": {
+   "en": "Paused: nozzle clog",
+   "key": "paused_nozzle_clog",
+   "nl": "Gepauzeerd vanwege een verstopping in de nozzle"
+  },
+  "36": {
+   "en": "Check accuracy before calibration",
+   "key": "check_absolute_accuracy_before_calibration",
+   "nl": "Controleer de absolute nauwkeurigheid van de printer vóór kalibratie"
+  },
+  "37": {
+   "en": "Absolute accuracy calibration",
+   "key": "absolute_accuracy_calibration",
+   "nl": "Absolute nauwkeurigheid kalibratie"
+  },
+  "38": {
+   "en": "Check accuracy after calibration",
+   "key": "check_absolute_accuracy_after_calibration",
+   "nl": "Controleer de absolute nauwkeurigheid van de printer na kalibratie"
+  },
+  "39": {
+   "en": "Nozzle offset calibration",
+   "key": "calibrate_nozzle_offset",
+   "nl": "Kalibratie van de spuitbeurt"
+  },
+  "4": {
+   "en": "Changing filament",
+   "key": "changing_filament",
+   "nl": "Filament aan het wisselen"
+  },
+  "40": {
+   "en": "High temperature auto bed levelling",
+   "key": "bed_level_high_temperature",
+   "nl": "Auto -bed nivellering op hoge temperatuur"
+  },
+  "41": {
+   "en": "Auto check: quick release lever",
+   "key": "check_quick_release",
+   "nl": "Auto check: snelle release hendel"
+  },
+  "42": {
+   "en": "Auto check: door and upper cover",
+   "key": "check_door_and_cover",
+   "nl": "Auto check: deur en bovenklep"
+  },
+  "43": {
+   "en": "Laser calibration",
+   "key": "laser_calibration",
+   "nl": "Laserkalibratie"
+  },
+  "44": {
+   "en": "Auto check: platform",
+   "key": "check_plaform",
+   "nl": "Auto check: platform"
+  },
+  "45": {
+   "en": "Auto check: birdeye camera",
+   "key": "check_birdeye_camera_position",
+   "nl": "Auto controle: Birdeye -camerapositie"
+  },
+  "46": {
+   "en": "Calibrate birdeye camera",
+   "key": "calibrate_birdeye_camera",
+   "nl": "Kalibreer Birdeye -camera"
+  },
+  "47": {
+   "en": "Auto bed leveling - phase 1",
+   "key": "bed_level_phase_1",
+   "nl": "Auto -bed nivellering - fase 1"
+  },
+  "48": {
+   "en": "Auto bed leveling - phase 2",
+   "key": "bed_level_phase_2",
+   "nl": "Auto -bed nivellering - fase 2"
+  },
+  "49": {
+   "en": "Heating chamber",
+   "key": "heating_chamber",
+   "nl": "Verwarmingskamer"
+  },
+  "5": {
+   "en": "M400 pause",
+   "key": "m400_pause",
+   "nl": "M400-pauze"
+  },
+  "50": {
+   "en": "Heated bed cooling",
+   "key": "heated_bedcooling",
+   "nl": "Verwarmde bedkoeling"
+  },
+  "51": {
+   "en": "Printing calibration lines",
+   "key": "print_calibration_lines",
+   "nl": "Kalibratielijnen afdrukken"
+  },
+  "52": {
+   "en": "Auto check: material",
+   "key": "check_material",
+   "nl": "Automatische controle: materiaal"
+  },
+  "53": {
+   "en": "Live View camera calibration",
+   "key": "calibrating_live_view_camera",
+   "nl": "Live View-camerakalibratie"
+  },
+  "54": {
+   "en": "Waiting for bed temperature",
+   "key": "waiting_for_heatbed_temperature",
+   "nl": "Wachten tot het verwarmingsbed de doeltemperatuur heeft bereikt"
+  },
+  "55": {
+   "en": "Auto check: material position",
+   "key": "check_material_position",
+   "nl": "Automatische controle: materiaalpositie"
+  },
+  "56": {
+   "en": "Cutter module offset calibration",
+   "key": "calibrating_cutter_model_offset",
+   "nl": "Kalibratie van de snijmodule-offset"
+  },
+  "57": {
+   "en": "Measuring surface",
+   "key": "measuring_surface",
+   "nl": "Meetoppervlak"
+  },
+  "58": {
+   "en": "Thermal preconditioning",
+   "key": "thermal_preconditioning",
+   "nl": "Thermische preconditionering voor optimalisatie van de eerste laag"
+  },
+  "59": {
+   "en": "Homing blade holder",
+   "key": "homing_blade_holder",
+   "nl": "Homing meshouder"
+  },
+  "6": {
+   "en": "Paused: filament runout",
+   "key": "paused_filament_runout",
+   "nl": "Gepauzeerd vanwege opgeraakt filament"
+  },
+  "60": {
+   "en": "Calibrating camera offset",
+   "key": "calibrating_camera_offset",
+   "nl": "Camera-offset kalibreren"
+  },
+  "61": {
+   "en": "Calibrating blade holder position",
+   "key": "calibrating_blade_holder_position",
+   "nl": "Kalibreren van de positie van de meshouder"
+  },
+  "62": {
+   "en": "Hotend pick and place test",
+   "key": "hotend_pick_place_test",
+   "nl": "Hotend pick-and-place-test"
+  },
+  "63": {
+   "en": "Waiting for chamber temperature to equalize",
+   "key": "waiting_chamber_temperature_equalize",
+   "nl": "Wachten tot de kamertemperatuur gelijk is"
+  },
+  "64": {
+   "en": "Preparing hotend",
+   "key": "preparing_hotend",
+   "nl": "Hotend voorbereiden"
+  },
+  "65": {
+   "en": "Calibrating the detection position of nozzle clumping",
+   "key": "calibrating_detection_nozzle_clumping",
+   "nl": "Kalibreren van de detectiepositie van klontvorming in de spuitmond"
+  },
+  "66": {
+   "en": "Purifying chamber air",
+   "key": "purifying_chamber_air",
+   "nl": "Kamerlucht zuiveren"
+  },
+  "67": {
+   "en": "Measuring rotary attachment",
+   "key": "measuring_rotary_attachment",
+   "nl": "Roterend opzetstuk meten"
+  },
+  "68": {
+   "en": "Moving toolhead above purge chute",
+   "key": "moving_toolhead_above_purge_chute",
+   "nl": "Bewegende gereedschapskop boven de zuiveringsgoot"
+  },
+  "69": {
+   "en": "Cooling nozzle",
+   "key": "cooling_nozzle",
+   "nl": "Koelmondstuk"
+  },
+  "7": {
+   "en": "Heating hotend",
+   "key": "heating_hotend",
+   "nl": "Hotend aan het verwarmen"
+  },
+  "70": {
+   "en": "Moving toolhead to center of heatbed",
+   "key": "moving_toolhead_to_center_of_heatbed",
+   "nl": "Gereedschapskop naar het midden van het verwarmingsbed verplaatsen"
+  },
+  "71": {
+   "en": "Active arc fitting",
+   "key": "active_arc_fitting",
+   "nl": "Actieve boogfitting"
+  },
+  "72": {
+   "en": "Hotend type detection",
+   "key": "hotend_type_detection",
+   "nl": "Detectie van hotend-type"
+  },
+  "73": {
+   "en": "Build plate alignment detection",
+   "key": "build_plate_alignment_detection",
+   "nl": "Detectie van uitlijning van bouwplaten"
+  },
+  "74": {
+   "en": "Heatbed surface foreign object detection",
+   "key": "heatbed_surface_foreign_object_detection",
+   "nl": "Detectie van vreemde voorwerpen op het verwarmingsbedoppervlak"
+  },
+  "75": {
+   "en": "Heatbed underside foreign object detection",
+   "key": "heatbed_underside_foreign_object_detection",
+   "nl": "Detectie van vreemde voorwerpen aan de onderkant van het verwarmingsbed"
+  },
+  "76": {
+   "en": "Pre-extrusion before printing",
+   "key": "pre_extrusion_before_printing",
+   "nl": "Pre-extrusie vóór het afdrukken"
+  },
+  "77": {
+   "en": "Preparing AMS",
+   "key": "preparing_ams",
+   "nl": "AMS voorbereiden"
+  },
+  "8": {
+   "en": "Calibrating extrusion",
+   "key": "calibrating_extrusion",
+   "nl": "Extrusie aan het kalibreren"
+  },
+  "82": {
+   "en": "Stabilizing heatbed",
+   "key": "heatbed_stabilizing",
+   "nl": "Stabiliserend verwarmingsbed"
+  },
+  "9": {
+   "en": "Scanning bed surface",
+   "key": "scanning_bed_surface",
+   "nl": "Bedoppervlakte aan het scannen"
+  }
  },
  "wiki": {
   "0300_0100_0001_0003": "https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/0300_0100_0001_0003",

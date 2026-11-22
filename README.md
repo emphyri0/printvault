@@ -12,6 +12,8 @@ Een kleine webapp om je 3D-prints bij te houden: foto's, modelbestanden (3mf, st
 - AMS-vochtigheid en -temperatuur per unit, met een verloop van de laatste 24 uur op de statuskaart
 - Onderhoudstaken per printer met een interval in printuren en/of dagen
 - Meldingen via ntfy: print klaar, print mislukt, onderhoud vervallen (elk apart aan/uit)
+- Live statuskaart zoals het printerscherm: fase, voortgang, eindtijdstip, temperaturen, snelheid, ventilatoren en actief AMS-slot
+- Temperatuur- en faseverloop per print als grafiek op de detailpagina
 - Live camerabeeld van de printer op de statuskaart, en automatisch een camerafoto bij de print als die klaar is of mislukt
 
 ## Live koppeling (MQTT)
@@ -37,9 +39,18 @@ Printers met een IP-adres en access code (X1, P2S, H2D: RTSPS op poort 322) krij
 - Gaat een print live naar *klaar* of *mislukt*, dan hangt de listener er een camerafoto aan (`camera-gelukt-…jpg` / `camera-mislukt-…jpg`). Een zelf gekozen omslag of een eerder toegevoegde eigen foto blijft de omslag; een slicer-/MakerWorld-thumbnail wordt door de camerafoto vervangen (de thumbnail blijft wel bij de foto's). Lukt het beeld niet, dan staat dat in de log en loopt de rest gewoon door. Een einde dat de listener pas na een herstart opmerkt, krijgt geen foto.
 - De access code komt niet in logs of foutmeldingen terecht.
 
+## Statuskaart en tijdreeks
+
+- De statuskaart toont wat het printerscherm toont: fase in leesbare tekst (`stg_cur`), plaat x van y, %, laag, resterende tijd en eindtijdstip, nozzle-/bed-/kamertemperatuur (huidig/doel; de P2S heeft geen doel voor de kamer), snelheidsprofiel, ventilatoren (onderdeel, aux, kamer, heatbreak) en het actieve AMS-slot met kleur. Links staat het camerabeeld (als de print geen eigen omslag heeft), anders de omslag of de printerfoto.
+- Velden die ontbreken (ander model, oudere firmware) vallen gewoon weg. De vertaling van de ruwe velden staat in `bambu_status.py`.
+- Bij de start van een print vult de listener in het printrecord in: nozzlediameter, nozzletype (bv. *Gehard staal (HS01)*), plaat (`device.plate.cur_id`, bv. `P0101`; de bron heeft daar geen leesbare naam voor), plaatnummer en aantal platen, snelheidsprofiel en of spaghettidetectie en eerstelaaginspectie aanstonden. Alleen velden die nog leeg zijn; wat je zelf invulde (of wat uit een 3mf kwam) blijft. Komt het volledige rapport pas later binnen, dan worden de lege velden alsnog ingevuld.
+- Tijdreeks: per print hoogstens één meetpunt per minuut (temperaturen, fase, %, laag) in `print_samples`, plus een punt bij elke faseovergang en bij het einde. Op de detailpagina als grafiek met fasebalk, crosshair en tabel.
+- Filter op nozzlediameter in het overzicht.
+- Volledig MQTT-rapport bekijken: `data/mqtt-rapport-p2s.json` (access code eruit gefilterd; niet in git).
+
 ## Foutcodes
 
-De teksten (Nederlands, Engels als terugval, P2S-varianten waar die bestaan) en wiki-links staan in `bambu_errors_data.json`. Bron: de foutcodelijsten van [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`scripts/hms_error_text/`, MIT), die zelf van Bambu Lab komen (`e.bambulab.com`, zoals Bambu Studio) en van de [HMS-wiki](https://wiki.bambulab.com/en/hms/home). De gebruikte commit staat in `_source` in het bestand.
+De teksten (Nederlands, Engels als terugval, P2S-varianten waar die bestaan), wiki-links en faseteksten (`CURRENT_STAGE_IDS` uit `pybambu/const.py` met de vertalingen, gelezen met `ast.literal_eval`, niet uitgevoerd) staan in `bambu_errors_data.json`. Eigen Nederlandse faseteksten in `bambu_status.STAGE_TEXT` gaan voor. Bron: de foutcodelijsten van [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`scripts/hms_error_text/`, MIT), die zelf van Bambu Lab komen (`e.bambulab.com`, zoals Bambu Studio) en van de [HMS-wiki](https://wiki.bambulab.com/en/hms/home). De gebruikte commit staat in `_source` in het bestand.
 
 ```bash
 python3 scripts/update_bambu_errors.py             # tabel opnieuw genereren (laatste main)

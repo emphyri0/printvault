@@ -22,6 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import bambu_errors
+import bambu_status
 import camera
 import maintenance
 import notify
@@ -36,6 +37,7 @@ LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
 RELOAD_SECONDS = int(os.environ.get("MQTT_RELOAD_SECONDS", "60"))
 
 AMS_INTERVAL = timedelta(minutes=10)   # hoogstens één opgeslagen AMS-meting per unit per 10 minuten
+SAMPLE_INTERVAL = timedelta(minutes=1) # tijdreeks per print: hoogstens één punt per minuut (plus bij elke faseovergang)
 ACTIVE = {"PREPARE", "RUNNING", "PAUSE"}
 DONE = {"FINISH": "gelukt", "FAILED": "mislukt"}
 
@@ -120,6 +122,8 @@ class PrinterTracker:
         self.connected = False
         self.last_message = None
         self.ams_saved = {}       # ams_id -> tijdstip van de laatst opgeslagen meting
+        self.settings_saved = (None, frozenset())   # (print_id, velden die al naar het printrecord gingen)
+        self.last_sample = (None, None, None)       # (print_id, tijdstip, fase) van het laatste meetpunt
         self.lock = threading.Lock()
 
     # ---------- berichten ----------
@@ -143,6 +147,9 @@ class PrinterTracker:
                 self._close_stale(self.print_id)
                 self.print_id = None
                 self._start(task, first_seen=False)
+            if self.print_id and self.gcode_state in ACTIVE:
+                self._save_settings(self.print_id)
+                self._record_sample(self.print_id)
 
     def _transition(self, prev, new, task):
         if new in ACTIVE:
@@ -154,6 +161,8 @@ class PrinterTracker:
                 # Listener start terwijl de print al klaar is: open record van deze opdracht afsluiten.
                 target = self._find_running(task)
             if target is not None:
+                if target == self.print_id:
+                    self._record_sample(target, force=True)   # laatste punt: het einde
                 self._finish(target, DONE[new], seen_live=prev is not None)
             self.print_id = None
             self.task_id = None
@@ -261,6 +270,41 @@ class PrinterTracker:
         lines += [f"HMS {bambu_errors.label(h)}" for h in hms]
         return ("\n".join(lines) or None), bambu_errors.suggest_fail_reason(err, hms)
 
+    # Velden die bij de start in het printrecord komen, maar enkel als ze nog leeg zijn.
+    # Komen ze pas later binnen (bv. het volledige rapport na een herstart), dan alsnog.
+    SETTINGS_COLUMNS = ("nozzle", "nozzle_type", "plate_type", "plate", "plate_count", "speed_profile",
+                        "spaghetti_detection", "first_layer_inspection")
+
+    def _save_settings(self, print_id):
+        info = {k: v for k, v in bambu_status.print_settings(self.state).items() if k in self.SETTINGS_COLUMNS}
+        done = self.settings_saved[1] if self.settings_saved[0] == print_id else frozenset()
+        new = {k: v for k, v in info.items() if k not in done}
+        if not new:
+            return
+        with connect_db(self.db_path) as db:
+            db.execute(f"UPDATE prints SET {', '.join(f'{k} = COALESCE(NULLIF({k}, ?), ?)' for k in new)} WHERE id = ?",
+                       [x for v in new.values() for x in ("", v)] + [print_id])
+        self.settings_saved = (print_id, done | frozenset(new))
+
+    def _record_sample(self, print_id, force=False):
+        now = self.clock()
+        point = bambu_status.sample(self.state)
+        last_id, last_at, last_stage = self.last_sample
+        if last_id != print_id:   # (her)start: laatste punt van deze print uit de database
+            with connect_db(self.db_path) as db:
+                row = db.execute("SELECT recorded_at, stage FROM print_samples WHERE print_id = ? "
+                                 "ORDER BY recorded_at DESC LIMIT 1", (print_id,)).fetchone()
+            last_at, last_stage = (datetime.fromisoformat(row[0]), row[1]) if row else (None, None)
+        if not force and last_at is not None and now - last_at < SAMPLE_INTERVAL and point["stage"] == last_stage:
+            self.last_sample = (print_id, last_at, last_stage)
+            return
+        if all(point[k] is None for k in ("nozzle", "bed", "chamber", "stage")):
+            return
+        with connect_db(self.db_path) as db:
+            db.execute(f"INSERT INTO print_samples (print_id, recorded_at, {', '.join(point)}) "
+                       f"VALUES (?, ?, {', '.join('?' * len(point))})", (print_id, now.isoformat(), *point.values()))
+        self.last_sample = (print_id, now, point["stage"])
+
     def _close_stale(self, print_id):
         note = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
         with connect_db(self.db_path) as db:
@@ -308,6 +352,7 @@ class PrinterTracker:
                     return int(v)
                 except (TypeError, ValueError):
                     return None
+            phase_code, phase_text = bambu_status.phase(s)
             return {
                 "printer_id": self.printer_id,
                 "printer": self.printer_name,
@@ -324,6 +369,14 @@ class PrinterTracker:
                 "hms": bambu_errors.describe_hms_list(s.get("hms")),
                 "ams": ams_units(s),
                 "updated_at": self.last_message.isoformat() if self.last_message else None,
+                "phase_code": phase_code,
+                "phase": phase_text,
+                "temps": {k: {"cur": v[0], "target": v[1]} for k, v in bambu_status.temperatures(s).items()},
+                "fans": bambu_status.fans(s),
+                "speed": bambu_status.speed(s),
+                "tray": bambu_status.active_tray(s),
+                "plate_idx": as_int(s.get("plate_idx")),
+                "plate_cnt": as_int(s.get("plate_cnt")),
             }
 
 

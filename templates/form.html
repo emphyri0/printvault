@@ -53,7 +53,28 @@
   </label>
   <label>Nozzletemp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
   <label>Bedtemp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
-  <label>Plaat nr.<input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="bij 3mf met meerdere platen"></label>
+  <label>Plaat
+    <span class="pair">
+      <input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="nr." aria-label="Plaatnummer">
+      <input name="plate_count" inputmode="numeric" value="{{ p.plate_count or '' }}" placeholder="van" aria-label="Aantal platen">
+    </span>
+  </label>
+  <label>Nozzletype<input name="nozzle_type" value="{{ p.nozzle_type or '' }}" placeholder="bv. Gehard staal (HS01)"></label>
+  <label>Snelheidsprofiel
+    <select name="speed_profile">
+      <option value="">–</option>
+      {% for sp in speed_profiles %}<option {% if sp == p.speed_profile %}selected{% endif %}>{{ sp }}</option>{% endfor %}
+    </select>
+  </label>
+  {% for field, label in [("spaghetti_detection", "Spaghettidetectie"), ("first_layer_inspection", "Eerstelaaginspectie")] %}
+  <label>{{ label }}
+    <select name="{{ field }}">
+      <option value="">–</option>
+      <option value="1" {% if p[field] == 1 %}selected{% endif %}>aan</option>
+      <option value="0" {% if p[field] == 0 %}selected{% endif %}>uit</option>
+    </select>
+  </label>
+  {% endfor %}
   <label>Printer
     <select name="printer_id">
       <option value="">–</option>

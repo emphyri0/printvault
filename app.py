@@ -15,6 +15,7 @@ from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_t
 from werkzeug.utils import secure_filename
 
 import bambu_errors
+import bambu_status
 import camera
 import maintenance
 import notify
@@ -31,6 +32,7 @@ MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
 STATUSES = ["gepland", "bezig", "gelukt", "mislukt", "onbekend", "opnieuw"]
 MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
 FAIL_REASONS = ["hechting", "warping", "spaghetti", "verstopping", "stroomuitval", "anders"]
+SPEED_PROFILES = list(bambu_status.SPEED_PROFILES.values())
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
@@ -79,6 +81,20 @@ CREATE TABLE IF NOT EXISTS ams_readings (
     recorded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ams_readings ON ams_readings(printer_id, ams_id, recorded_at);
+CREATE TABLE IF NOT EXISTS print_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
+    recorded_at TEXT NOT NULL,
+    nozzle REAL,
+    nozzle_target REAL,
+    bed REAL,
+    bed_target REAL,
+    chamber REAL,
+    stage INTEGER,
+    percent INTEGER,
+    layer INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_print_samples ON print_samples(print_id, recorded_at);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -128,7 +144,9 @@ MIGRATIONS = {
                ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER"),
                ("fail_reason", "TEXT"), ("fail_note", "TEXT"),
                ("started_at", "TEXT"), ("finished_at", "TEXT"), ("print_error", "INTEGER"),
-               ("task_id", "TEXT"), ("source", "TEXT")],
+               ("task_id", "TEXT"), ("source", "TEXT"),
+               ("plate_count", "INTEGER"), ("nozzle_type", "TEXT"), ("speed_profile", "TEXT"),
+               ("spaghetti_detection", "INTEGER"), ("first_layer_inspection", "INTEGER")],
     "printers": [("ip", "TEXT"), ("serial", "TEXT"), ("access_code", "TEXT"),
                  ("mqtt_enabled", "INTEGER DEFAULT 0")],
 }
@@ -173,6 +191,11 @@ def num(value, cast=float):
         return None
 
 
+def onoff(value):
+    """'1' → 1, '0' → 0, leeg → None (niet ingevuld)."""
+    return {"1": 1, "0": 0}.get(value)
+
+
 def form_to_print(form):
     status = form.get("status", "gepland")
     failed = status == "mislukt"
@@ -202,6 +225,11 @@ def form_to_print(form):
         "nozzle_temp": num(form.get("nozzle_temp"), int),
         "bed_temp": num(form.get("bed_temp"), int),
         "plate": num(form.get("plate"), int),
+        "plate_count": num(form.get("plate_count"), int),
+        "nozzle_type": form.get("nozzle_type", "").strip() or None,
+        "speed_profile": form.get("speed_profile", "").strip() or None,
+        "spaghetti_detection": onoff(form.get("spaghetti_detection")),
+        "first_layer_inspection": onoff(form.get("first_layer_inspection")),
         "fail_reason": reason if failed and reason in FAIL_REASONS else None,
         "fail_note": (form.get("fail_note", "").strip() or None) if failed else None,
     }
@@ -345,7 +373,7 @@ def filesize(size):
 def inject_lists():
     printers = get_db().execute("SELECT id, name FROM printers ORDER BY name").fetchall()
     return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
-            "fail_reasons": FAIL_REASONS}
+            "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES}
 
 
 @app.route("/")
@@ -355,6 +383,7 @@ def index():
     status = request.args.get("status", "")
     printer = num(request.args.get("printer"), int)
     fail = request.args.get("fail", "")
+    nozzle = num(request.args.get("nozzle"))
     sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own_cover,
                     (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
@@ -374,6 +403,9 @@ def index():
     if fail in FAIL_REASONS:
         sql += " AND p.status = 'mislukt' AND p.fail_reason = ?"
         args.append(fail)
+    if nozzle:
+        sql += " AND ABS(p.nozzle - ?) < 0.001"
+        args.append(nozzle)
     sql += " ORDER BY COALESCE(p.printed_on, p.created_at) DESC, p.id DESC"
     db = get_db()
     prints = db.execute(sql, args).fetchall()
@@ -385,8 +417,9 @@ def index():
                   SUM(status = 'mislukt') AS failed
            FROM prints"""
     ).fetchone()
-    return render_template("index.html", prints=prints, stats=stats, q=q,
-                           material=material, status=status, printer=printer, fail=fail)
+    nozzles = [r[0] for r in db.execute("SELECT DISTINCT nozzle FROM prints WHERE nozzle > 0 ORDER BY nozzle")]
+    return render_template("index.html", prints=prints, stats=stats, q=q, material=material, status=status,
+                           printer=printer, fail=fail, nozzle=nozzle, nozzles=nozzles)
 
 
 @app.route("/print/new", methods=["GET", "POST"])
@@ -481,7 +514,11 @@ def show_print(print_id):
     printer = db.execute("SELECT * FROM printers WHERE id = ?", (p["printer_id"],)).fetchone() if p["printer_id"] else None
     cover = db.execute(f"SELECT {COVER_SQL} FROM prints p WHERE p.id = ?", (print_id,)).fetchone()[0]
     ams = db.execute("SELECT * FROM print_ams WHERE print_id = ? ORDER BY ams_id, tray_id", (print_id,)).fetchall()
-    return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams,
+    samples = [[r["recorded_at"], r["nozzle"], r["nozzle_target"], r["bed"], r["bed_target"], r["chamber"],
+                r["stage"], bambu_status.stage_text(r["stage"]) if r["stage"] is not None else None,
+                bambu_status.stage_group(r["stage"]) if r["stage"] is not None else None, r["percent"], r["layer"]]
+               for r in db.execute("SELECT * FROM print_samples WHERE print_id = ? ORDER BY recorded_at", (print_id,))]
+    return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams, samples=samples,
                            photos=[f for f in files if f["kind"] == "photo"],
                            models=[f for f in files if f["kind"] == "model"])
 
@@ -947,9 +984,23 @@ def api_live():
         data["available"] = True
     except Exception:
         data = {"available": False, "printers": []}
+    db = get_db()
     for p in data.get("printers") or []:
-        if isinstance(p, dict) and p.get("ams"):
+        if not isinstance(p, dict):
+            continue
+        if p.get("ams"):
             p["ams_history"] = ams_history(p.get("printer_id"))
+        # beeld naast de statuskaart: omslag van de print (en of het een eigen foto is), anders de printerfoto
+        p["cover"] = p["own_cover"] = None
+        if p.get("print_id"):
+            row = db.execute(f"SELECT {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own FROM prints p WHERE p.id = ?",
+                             (p["print_id"],)).fetchone()
+            if row and row["cover"]:
+                p["cover"], p["own_cover"] = url_for("uploaded", stored_name=row["cover"]), bool(row["own"])
+        pr = db.execute("SELECT photo, COALESCE(ip, '') != '' AND COALESCE(access_code, '') != '' AS cam "
+                        "FROM printers WHERE id = ?", (p.get("printer_id"),)).fetchone()
+        p["printer_photo"] = url_for("uploaded", stored_name=pr["photo"]) if pr and pr["photo"] else None
+        p["camera"] = bool(pr and pr["cam"])
     return jsonify(data)
 
 
