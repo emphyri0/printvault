@@ -283,12 +283,17 @@ def save_uploads(print_id, uploads):
         flash("Overgeslagen (onbekend bestandstype): " + ", ".join(skipped), "warn")
 
 
+# Automatische thumbnails (uit de slicer of van MakerWorld); al de rest zijn echte foto's.
+THUMB_SQL = "(f.original_name LIKE 'thumbnail-plaat-%' OR f.original_name LIKE 'makerworld-cover.%')"
 # Omslagfoto: gekozen foto, anders de eerste echte foto, anders een slicer-/MakerWorld-thumbnail.
-COVER_SQL = """COALESCE(
+COVER_SQL = f"""COALESCE(
     (SELECT f.stored_name FROM files f WHERE f.id = p.cover_file_id AND f.print_id = p.id AND f.kind = 'photo'),
     (SELECT f.stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
-       ORDER BY (f.original_name LIKE 'thumbnail-plaat-%' OR f.original_name LIKE 'makerworld-cover.%'), f.id
+       ORDER BY {THUMB_SQL}, f.id
        LIMIT 1))"""
+# Eigen omslag: een gekozen foto of een echte foto. Een thumbnail mag door het camerabeeld vervangen worden.
+OWN_COVER_SQL = f"""EXISTS (SELECT 1 FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
+    AND (f.id = p.cover_file_id OR NOT {THUMB_SQL}))"""
 
 
 def get_print(print_id):
@@ -350,7 +355,7 @@ def index():
     status = request.args.get("status", "")
     printer = num(request.args.get("printer"), int)
     fail = request.args.get("fail", "")
-    sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover,
+    sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own_cover,
                     (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []

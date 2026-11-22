@@ -205,16 +205,22 @@ class EndSnapshotTest(unittest.TestCase):
         fid = self.save(pid)
         with ml.connect_db(app.DB_PATH) as db:
             f = db.execute("SELECT * FROM files WHERE id = ?", (fid,)).fetchone()
-            self.assertEqual(db.execute("SELECT cover_file_id FROM prints WHERE id = ?", (pid,)).fetchone()[0], fid)
         self.assertEqual((f["kind"], f["original_name"], f["size"]), ("photo", "camera-gelukt-20261122-1530.jpg", 14))
         with open(os.path.join(app.UPLOAD_DIR, f["stored_name"]), "rb") as fh:
             self.assertEqual(fh.read(), jpeg(9))
         self.assertEqual(self.cover(pid), f["stored_name"])
 
-    def test_keeps_existing_thumbnail_as_cover(self):
-        pid, ids = self.new_print(["thumbnail-plaat-1.png"])
+    def test_replaces_thumbnail_as_cover(self):
+        pid, ids = self.new_print(["thumbnail-plaat-1.png", "makerworld-cover.jpg"])
+        fid = self.save(pid)
+        with ml.connect_db(app.DB_PATH) as db:
+            stored = db.execute("SELECT stored_name FROM files WHERE id = ?", (fid,)).fetchone()[0]
+        self.assertEqual(self.cover(pid), stored)
+
+    def test_keeps_earlier_real_photo(self):
+        pid, ids = self.new_print(["thumbnail-plaat-1.png", "eigen.jpg"])
         self.save(pid)
-        self.assertEqual(self.cover(pid), "s0.jpg")
+        self.assertEqual(self.cover(pid), "s1.jpg")
 
     def test_keeps_chosen_cover(self):
         pid, ids = self.new_print(["eigen.jpg", "tweede.jpg"], cover_index=1)
@@ -295,8 +301,16 @@ class CameraRoutesTest(unittest.TestCase):
                        "(1, 'loopt', 'bezig', 1), (2, 'klaar', 'gelukt', 1), (3, 'zonder camera', 'bezig', 2), "
                        "(4, 'met foto', 'bezig', 1)")
             db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (4, 'photo', 'f.jpg', 'f.jpg')")
+            db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES (5, 'thumb', 'bezig', 1), "
+                       "(6, 'thumb gekozen', 'bezig', 1)")
+            db.execute("INSERT INTO files (id, print_id, kind, stored_name, original_name) VALUES "
+                       "(50, 5, 'photo', 't5.png', 'thumbnail-plaat-1.png'), (60, 6, 'photo', 't6.png', 'thumbnail-plaat-1.png')")
+            db.execute("UPDATE prints SET cover_file_id = 60 WHERE id = 6")
         html = self.c.get("/").get_data(as_text=True)
-        self.assertEqual(html.count('class="livesnap"'), 1)
+        self.assertEqual(html.count('class="livesnap"'), 2)                      # print 1 en 5
+        self.assertIn('data-print="5" data-fallback="/uploads/t5.png"', html)   # thumbnail vervangen, als reserve
+        self.assertIn('src="/uploads/t6.png"', html)                             # zelf gekozen omslag blijft
+        self.assertIn('src="/uploads/f.jpg"', html)                              # eigen foto blijft
         self.assertIn('data-printer="1" data-print="1"', html)
         self.assertIn("/printers/1/snapshot.jpg", html)
         self.assertEqual(html.count('<div class="nothumb">geen foto</div>'), 2)   # klaar + zonder camera

@@ -328,8 +328,8 @@ class PrinterTracker:
 
 
 def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
-    """Hangt een camerabeeld als foto aan de print. Wordt het geen omslagfoto als de print er al een heeft
-    (gekozen, of de foto die de app nu als omslag toont); anders wel."""
+    """Hangt een camerabeeld als foto aan de print. De omslag volgt COVER_SQL in app.py: een gekozen
+    omslag of een eerdere echte foto blijft, maar het camerabeeld gaat voor op een slicer-/MakerWorld-thumbnail."""
     stored = f"{uuid.uuid4().hex}.jpg"
     name = f"camera-{status}-{when:%Y%m%d-%H%M}.jpg"
     path = os.path.join(upload_dir, stored)
@@ -338,20 +338,11 @@ def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
         fh.write(jpeg)
     try:
         with connect_db(db_path) as db:
-            row = db.execute("SELECT cover_file_id FROM prints WHERE id = ?", (print_id,)).fetchone()
-            if row is None:
+            if db.execute("SELECT 1 FROM prints WHERE id = ?", (print_id,)).fetchone() is None:
                 raise LookupError(f"print {print_id} bestaat niet meer")
-            # dezelfde volgorde als COVER_SQL in app.py: gekozen foto, eerste echte foto, dan thumbnails
-            current = db.execute(
-                "SELECT id FROM files WHERE print_id = ? AND kind = 'photo' ORDER BY (id = ?) DESC, "
-                "(original_name LIKE 'thumbnail-plaat-%' OR original_name LIKE 'makerworld-cover.%'), id LIMIT 1",
-                (print_id, row["cover_file_id"] or 0)).fetchone()
             file_id = db.execute(
                 "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?, 'photo', ?, ?, ?)",
                 (print_id, stored, name, len(jpeg))).lastrowid
-            # de omslag vastzetten, zodat de nieuwe foto een bestaande omslag (ook een thumbnail) niet vervangt
-            db.execute("UPDATE prints SET cover_file_id = ? WHERE id = ?",
-                       (current["id"] if current else file_id, print_id))
     except BaseException:
         os.remove(path)
         raise

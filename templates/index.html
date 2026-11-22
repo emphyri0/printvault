@@ -38,9 +38,10 @@
   {% for p in prints %}
   <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
     <div class="thumb">
-      {% if p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
-      {% elif p.status == 'bezig' and p.has_camera %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
-        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}" alt="Camerabeeld van de printer" loading="lazy"><span class="snaptag">live</span>
+      {% if p.status == 'bezig' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
+        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ url_for('uploaded', stored_name=p.cover) }}"{% endif %}
+        alt="Camerabeeld van de printer" loading="lazy"><span class="snaptag">live</span>
+      {% elif p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
       {% else %}<div class="nothumb">geen foto</div>{% endif %}
       <span class="badge {{ p.status }}">{{ p.status }}{% if p.status == 'mislukt' and p.fail_reason %} · {{ p.fail_reason }}{% endif %}</span>
     </div>
@@ -146,14 +147,20 @@
     });
     return wrap;
   }
-  // Kaarten van lopende prints zonder omslag tonen het camerabeeld van de printer (elke 30 s nieuw).
+  // Kaarten van lopende prints zonder eigen omslag (een thumbnail telt niet) tonen het camerabeeld van de printer (elke 30 s nieuw).
   // Is de print volgens de live status niet meer bezig, dan nog één laatste beeld en daarna stoppen:
   // bij het herladen staat er dan de eindfoto die de listener aan de print hing.
   const SNAP_MS = 30000;
-  function snapFailed(img) {
-    const div = el("div", "nothumb", "geen foto");
+  function snapFailed(img) {   // geen camerabeeld: terug naar de thumbnail, of "geen foto"
     img.nextElementSibling?.classList.contains("snaptag") && img.nextElementSibling.remove();
-    img.replaceWith(div);
+    if (img.dataset.fallback) {
+      const thumb = el("img");
+      thumb.alt = "";
+      thumb.src = img.dataset.fallback;
+      img.replaceWith(thumb);
+    } else {
+      img.replaceWith(el("div", "nothumb", "geen foto"));
+    }
   }
   function refreshSnap(img, last) {
     const next = new Image();
