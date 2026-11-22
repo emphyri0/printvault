@@ -142,7 +142,7 @@ class TrackerTest(unittest.TestCase):
         t2 = self.tracker()
         t2.handle(report("RUNNING", task="2", name="Ander"))
         rows = self.prints()
-        self.assertEqual([r["status"] for r in rows], ["opnieuw", "bezig"])
+        self.assertEqual([r["status"] for r in rows], ["onbekend", "bezig"])
         self.assertEqual(rows[1]["name"], "Ander")
 
     def test_new_task_while_connected(self):
@@ -150,7 +150,7 @@ class TrackerTest(unittest.TestCase):
         t.handle(report("RUNNING", task="1"))
         t.handle(report("RUNNING", task="2", name="Volgende"))   # FINISH gemist
         rows = self.prints()
-        self.assertEqual([r["status"] for r in rows], ["opnieuw", "bezig"])
+        self.assertEqual([r["status"] for r in rows], ["onbekend", "bezig"])
 
     def test_partial_messages_are_merged(self):
         t = self.tracker()
@@ -202,6 +202,29 @@ class AppTest(unittest.TestCase):
         with ml.connect_db(app.DB_PATH) as db:
             row = db.execute("SELECT serial, access_code, mqtt_enabled FROM printers").fetchone()
         self.assertEqual(tuple(row), ("00M00A000000000", "geheim12", 1))
+
+    def test_migrates_listener_opnieuw_to_onbekend(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            db.executemany("INSERT INTO prints (name, status, source, notes) VALUES (?, ?, ?, ?)", [
+                ("gemist", "opnieuw", "mqtt", "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."),
+                ("bewust", "opnieuw", None, "Kleur klopte niet"),
+                ("mqtt bewust", "opnieuw", "mqtt", "Handmatig op opnieuw gezet")])
+        app.init_db()
+        app.init_db()                             # idempotent
+        with ml.connect_db(app.DB_PATH) as db:
+            rows = db.execute("SELECT name, status FROM prints ORDER BY id").fetchall()
+        self.assertEqual([tuple(r) for r in rows],
+                         [("gemist", "onbekend"), ("bewust", "opnieuw"), ("mqtt bewust", "opnieuw")])
+
+    def test_status_filter_has_onbekend(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            db.execute("INSERT INTO prints (name, status) VALUES ('a', 'onbekend'), ('b', 'gelukt')")
+        html = self.c.get("/?status=onbekend").get_data(as_text=True)
+        self.assertIn("<option selected>onbekend</option>", html)
+        self.assertIn(">a<", html)
+        self.assertNotIn(">b<", html)
+        self.assertIn("onbekend", app.STATUSES)
+        self.assertIn("opnieuw", app.STATUSES)
 
     def test_live_unavailable(self):
         app.LIVE_URL = "http://127.0.0.1:9/live"

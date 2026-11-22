@@ -203,10 +203,10 @@ class PrinterTracker:
     def _close_stale(self, print_id):
         note = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
         with connect_db(self.db_path) as db:
-            db.execute("UPDATE prints SET status = 'opnieuw', "
+            db.execute("UPDATE prints SET status = 'onbekend', "
                        "notes = TRIM(COALESCE(notes, '') || char(10) || ?) WHERE id = ? AND status = 'bezig'",
                        (note, print_id))
-        log.warning("printer %s: print %s had geen einde, gemarkeerd als 'opnieuw'", self.printer_id, print_id)
+        log.warning("printer %s: print %s had geen einde, gemarkeerd als 'onbekend'", self.printer_id, print_id)
 
     def _save_ams(self, db, print_id):
         slots = ams_slots(self.state)

@@ -57,6 +57,7 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .badge.gelukt { background: #1f9d55; }
 .badge.mislukt { background: var(--danger); }
 .badge.opnieuw { background: var(--warn); }
+.badge.onbekend { background: #6b7280; }
 .badge.gepland { background: #3b6fd6; }
 .badge.bezig { background: #7c4dd6; }
 

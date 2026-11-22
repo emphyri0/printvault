@@ -15,7 +15,7 @@ Vul bij **Printers → Bewerk** het IP-adres, serienummer en de access code in e
 
 - Verbinding: `mqtts://<ip>:8883`, gebruiker `bblp`, wachtwoord = access code, TLS zonder certificaatcontrole. Alleen subscribe op `device/<serienummer>/report`; er wordt niets naar de printer gestuurd.
 - `PREPARE`/`RUNNING` → print met status *bezig*; `FINISH` → *gelukt* met eindtijd en duur; `FAILED` → *mislukt* met de foutcode van de printer.
-- Herstart de listener tijdens een print, dan wordt het bestaande *bezig*-record hervat (herkend aan `task_id`). Zag de listener het einde van een print niet en start er een nieuwe, dan krijgt de oude status *opnieuw* met een notitie.
+- Herstart de listener tijdens een print, dan wordt het bestaande *bezig*-record hervat (herkend aan `task_id`). Zag de listener het einde van een print niet en start er een nieuwe, dan krijgt de oude status *onbekend* met een notitie (*opnieuw* is alleen voor prints die je bewust opnieuw wilt maken).
 - Live status (percentage, resterende tijd, laag) staat alleen in het geheugen van de listener en is via `/api/live` op te vragen.
 - Logboek: `docker compose logs -f printvault-mqtt`
 

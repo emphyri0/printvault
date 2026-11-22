@@ -21,7 +21,8 @@ DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 
 PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
 MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
-STATUSES = ["gepland", "bezig", "gelukt", "mislukt", "opnieuw"]
+# "onbekend": de listener zag het einde van de print niet. "opnieuw": bewust opnieuw te printen.
+STATUSES = ["gepland", "bezig", "gelukt", "mislukt", "onbekend", "opnieuw"]
 MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
 FAIL_REASONS = ["hechting", "warping", "spaghetti", "verstopping", "stroomuitval", "anders"]
 
@@ -117,6 +118,9 @@ def init_db():
                         if "duplicate column" not in str(e):
                             raise
         db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
+        # Prints die de listener vroeger op 'opnieuw' zette omdat hij het einde miste, krijgen 'onbekend'.
+        db.execute("UPDATE prints SET status = 'onbekend' WHERE status = 'opnieuw' AND source = 'mqtt' "
+                   "AND notes LIKE '%Einde niet waargenomen%'")
 
 
 def ext_of(filename):
