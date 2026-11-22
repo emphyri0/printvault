@@ -3,6 +3,8 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
 import urllib.request
 import uuid
 from contextlib import closing
@@ -348,7 +350,8 @@ def index():
     status = request.args.get("status", "")
     printer = num(request.args.get("printer"), int)
     fail = request.args.get("fail", "")
-    sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover
+    sql = f"""SELECT p.*, pr.name AS printer_name, {COVER_SQL} AS cover,
+                    (COALESCE(pr.ip, '') != '' AND COALESCE(pr.access_code, '') != '') AS has_camera
              FROM prints p LEFT JOIN printers pr ON pr.id = p.printer_id WHERE 1=1"""
     args = []
     if printer:
@@ -695,6 +698,37 @@ def delete_printer(printer_id):
 
 cameras = camera.CameraManager()
 
+# Snapshots worden per printer ~20 s bewaard (ook een mislukte poging), zodat meerdere open
+# tabbladen samen hoogstens één verbinding per 20 s naar de printer maken.
+SNAPSHOT_CACHE_SECONDS = 20
+_snapshots = {}                   # printer_id -> (rtsp-url, tijdstip, jpeg of CameraError)
+_snapshot_locks = {}
+_snapshot_locks_guard = threading.Lock()
+
+
+def cached_snapshot(printer_id, ip, access_code):
+    """JPEG van de printer: vers beeld van een lopende live stream, anders uit de cache of nieuw opgehaald.
+    Geeft CameraError (ook uit de cache) als er geen beeld is."""
+    url = camera.rtsp_url(ip, access_code)
+    cam = cameras.peek(printer_id)
+    if cam is not None and cam.url == url:
+        jpeg = cam.latest()
+        if jpeg is not None:
+            return jpeg
+    with _snapshot_locks_guard:
+        lock = _snapshot_locks.setdefault(printer_id, threading.Lock())
+    with lock:   # gelijktijdige verzoeken wachten op één ophaling
+        hit = _snapshots.get(printer_id)
+        if hit is None or hit[0] != url or time.monotonic() - hit[1] >= SNAPSHOT_CACHE_SECONDS:
+            try:
+                result = camera.grab_snapshot(ip, access_code)
+            except camera.CameraError as e:
+                result = e
+            hit = _snapshots[printer_id] = (url, time.monotonic(), result)
+    if isinstance(hit[2], camera.CameraError):
+        raise hit[2]
+    return hit[2]
+
 
 def camera_printer(printer_id):
     pr = get_printer(printer_id)
@@ -720,13 +754,10 @@ def camera_stream(printer_id):
 @app.route("/printers/<int:printer_id>/snapshot.jpg")
 def camera_snapshot(printer_id):
     pr = camera_printer(printer_id)
-    cam = cameras.peek(printer_id)
-    jpeg = cam.latest() if cam is not None and cam.url == camera.rtsp_url(pr["ip"], pr["access_code"]) else None
-    if jpeg is None:
-        try:
-            jpeg = camera.grab_snapshot(pr["ip"], pr["access_code"])
-        except camera.CameraError as e:
-            return Response(str(e), status=502, mimetype="text/plain")
+    try:
+        jpeg = cached_snapshot(printer_id, pr["ip"], pr["access_code"])
+    except camera.CameraError as e:
+        return Response(str(e), status=502, mimetype="text/plain", headers={"Cache-Control": "no-store"})
     return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
 

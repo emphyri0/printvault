@@ -39,6 +39,8 @@
   <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
     <div class="thumb">
       {% if p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
+      {% elif p.status == 'bezig' and p.has_camera %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
+        data-printer="{{ p.printer_id }}" data-print="{{ p.id }}" alt="Camerabeeld van de printer" loading="lazy"><span class="snaptag">live</span>
       {% else %}<div class="nothumb">geen foto</div>{% endif %}
       <span class="badge {{ p.status }}">{{ p.status }}{% if p.status == 'mislukt' and p.fail_reason %} · {{ p.fail_reason }}{% endif %}</span>
     </div>
@@ -144,8 +146,41 @@
     });
     return wrap;
   }
+  // Kaarten van lopende prints zonder omslag tonen het camerabeeld van de printer (elke 30 s nieuw).
+  // Is de print volgens de live status niet meer bezig, dan nog één laatste beeld en daarna stoppen:
+  // bij het herladen staat er dan de eindfoto die de listener aan de print hing.
+  const SNAP_MS = 30000;
+  function snapFailed(img) {
+    const div = el("div", "nothumb", "geen foto");
+    img.nextElementSibling?.classList.contains("snaptag") && img.nextElementSibling.remove();
+    img.replaceWith(div);
+  }
+  function refreshSnap(img, last) {
+    const next = new Image();
+    next.onload = () => {
+      img.src = next.src;
+      if (last) { img.dataset.done = "1"; img.nextElementSibling.textContent = "einde"; }
+    };
+    next.src = `/printers/${img.dataset.printer}/snapshot.jpg?t=${Date.now()}`;
+  }
+  for (const img of document.querySelectorAll("img.livesnap")) {
+    img.addEventListener("error", () => snapFailed(img), {once: true});
+    if (img.complete && !img.naturalWidth) snapFailed(img);   // al mislukt voor dit script liep
+  }
+  let activePrints = null;   // print-id's die volgens de listener nu lopen (null = onbekend)
+  setInterval(() => {
+    if (document.hidden) return;
+    for (const img of document.querySelectorAll("img.livesnap:not([data-done])")) {
+      const ended = activePrints !== null && !activePrints.has(Number(img.dataset.print));
+      refreshSnap(img, ended);
+    }
+  }, SNAP_MS);
   function render(data) {
     const printers = (data.printers || []);
+    if (data.available) {
+      activePrints = new Set(printers.filter(p => p.print_id && ["PREPARE", "RUNNING", "PAUSE"].includes(p.gcode_state))
+                                     .map(p => p.print_id));
+    }
     box.hidden = !printers.length;
     const seen = new Set();
     for (const p of printers) {

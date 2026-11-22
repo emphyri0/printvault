@@ -245,6 +245,7 @@ class CameraRoutesTest(unittest.TestCase):
             os.remove(app.DB_PATH)
         app.init_db()
         app.cameras = camera.CameraManager()
+        app._snapshots.clear()
         self.c = app.app.test_client()
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO printers (name, ip, access_code) VALUES ('met', '10.0.0.2', ?)", (CODE,))
@@ -259,6 +260,47 @@ class CameraRoutesTest(unittest.TestCase):
         with mock.patch("camera.grab_snapshot", return_value=jpeg(4)):
             r = self.c.get("/printers/1/snapshot.jpg")
         self.assertEqual((r.status_code, r.mimetype, r.data), (200, "image/jpeg", jpeg(4)))
+
+    def test_snapshot_cached(self):
+        with mock.patch("camera.grab_snapshot", return_value=jpeg(4)) as grab:
+            for _ in range(3):
+                self.assertEqual(self.c.get("/printers/1/snapshot.jpg").data, jpeg(4))
+            self.assertEqual(grab.call_count, 1)
+            with mock.patch.object(app, "SNAPSHOT_CACHE_SECONDS", 0):
+                self.c.get("/printers/1/snapshot.jpg")
+            self.assertEqual(grab.call_count, 2)
+
+    def test_snapshot_failure_cached_too(self):
+        with mock.patch("camera.grab_snapshot", side_effect=camera.CameraError("weg")) as grab:
+            codes = [self.c.get("/printers/1/snapshot.jpg").status_code for _ in range(3)]
+        self.assertEqual((codes, grab.call_count), ([502] * 3, 1))
+
+    def test_snapshot_cache_follows_new_code(self):
+        with mock.patch("camera.grab_snapshot", return_value=jpeg(4)) as grab:
+            self.c.get("/printers/1/snapshot.jpg")
+            with ml.connect_db(app.DB_PATH) as db:
+                db.execute("UPDATE printers SET access_code = 'nieuw' WHERE id = 1")
+            self.c.get("/printers/1/snapshot.jpg")
+        self.assertEqual(grab.call_count, 2)
+
+    def test_snapshot_prefers_running_live_stream(self):
+        cam = app.cameras.get(1, "10.0.0.2", CODE)
+        with mock.patch.object(cam, "latest", return_value=jpeg(7)), mock.patch("camera.grab_snapshot") as grab:
+            self.assertEqual(self.c.get("/printers/1/snapshot.jpg").data, jpeg(7))
+        grab.assert_not_called()
+
+    def test_running_print_card_shows_snapshot(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES "
+                       "(1, 'loopt', 'bezig', 1), (2, 'klaar', 'gelukt', 1), (3, 'zonder camera', 'bezig', 2), "
+                       "(4, 'met foto', 'bezig', 1)")
+            db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (4, 'photo', 'f.jpg', 'f.jpg')")
+        html = self.c.get("/").get_data(as_text=True)
+        self.assertEqual(html.count('class="livesnap"'), 1)
+        self.assertIn('data-printer="1" data-print="1"', html)
+        self.assertIn("/printers/1/snapshot.jpg", html)
+        self.assertEqual(html.count('<div class="nothumb">geen foto</div>'), 2)   # klaar + zonder camera
+        self.assertNotIn(CODE, html)
 
     def test_snapshot_error_redacted(self):
         err = camera.CameraError(camera.redact(f"{camera.rtsp_url('10.0.0.2', CODE)} weg", CODE))

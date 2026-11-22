@@ -32,7 +32,8 @@ Printers met een IP-adres en access code (X1, P2S, H2D: RTSPS op poort 322) krij
 
 - Op de statuskaart: knop **📷 Camera**; bij **Printers** een link die het beeld in een nieuw tabblad opent.
 - `/printers/<id>/camera.mjpg`: live beeld als MJPEG (± 5 fps, max. 1280 breed; aan te passen met `CAMERA_FPS` en `CAMERA_WIDTH`). ffmpeg in de container zet de stream om. Per printer is er één verbinding, gedeeld door alle kijkers. Die stopt 15 seconden nadat de laatste kijker weg is; een verborgen tabblad stopt de stream ook.
-- `/printers/<id>/snapshot.jpg`: één beeld in volle resolutie.
+- `/printers/<id>/snapshot.jpg`: één beeld in volle resolutie. Het beeld wordt ~20 s per printer bewaard (ook een mislukte poging), zodat meerdere tabbladen de printer niet extra belasten; loopt de live stream, dan komt het beeld daaruit.
+- Op de homepage toont de kaart van een print met status *bezig* en zonder omslagfoto het camerabeeld (label *live*), elke 30 s ververst. Meldt de listener dat de print niet meer loopt, dan volgt nog één laatste beeld (label *einde*); na herladen staat er de eindfoto die de listener aan de print hing.
 - Gaat een print live naar *klaar* of *mislukt*, dan hangt de listener er een camerafoto aan (`camera-gelukt-…jpg` / `camera-mislukt-…jpg`). Heeft de print al een omslagfoto (gekozen, een eigen foto of een slicer-/MakerWorld-thumbnail), dan blijft die de omslag; anders wordt de camerafoto de omslag. Lukt het beeld niet, dan staat dat in de log en loopt de rest gewoon door. Een einde dat de listener pas na een herstart opmerkt, krijgt geen foto.
 - De access code komt niet in logs of foutmeldingen terecht.
 
