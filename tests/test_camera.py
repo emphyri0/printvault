@@ -308,9 +308,9 @@ class CameraRoutesTest(unittest.TestCase):
             db.execute("UPDATE prints SET cover_file_id = 60 WHERE id = 6")
         html = self.c.get("/").get_data(as_text=True)
         self.assertEqual(html.count('class="livesnap"'), 2)                      # prints 1 and 5
-        self.assertIn('data-print="5" data-fallback="/uploads/t5.png"', html)   # thumbnail replaced, kept as fallback
-        self.assertIn('src="/uploads/t6.png"', html)                             # a chosen cover stays
-        self.assertIn('src="/uploads/f.jpg"', html)                              # an own photo stays
+        self.assertIn('data-print="5" data-fallback="/thumb/600/t5.png"', html)   # thumbnail replaced, kept as fallback
+        self.assertIn('src="/thumb/600/t6.png"', html)                             # a chosen cover stays
+        self.assertIn('src="/thumb/600/f.jpg"', html)                              # an own photo stays
         self.assertIn('data-printer="1" data-print="1"', html)
         self.assertIn("/printers/1/snapshot.jpg", html)
         self.assertEqual(html.count('<div class="nothumb">no photo</div>'), 2)   # done + no camera

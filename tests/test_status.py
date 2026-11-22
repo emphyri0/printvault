@@ -271,7 +271,7 @@ class AppTest(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", return_value=resp):
             p = self.c.get("/api/live").get_json()["printers"][0]
         self.assertEqual((p["cover"], p["own_cover"], p["printer_photo"], p["camera"]),
-                         ("/uploads/t.png", False, "/uploads/pr.jpg", True))
+                         ("/thumb/1600/t.png", False, "/thumb/1600/pr.jpg", True))
 
 
 class FormatTest(unittest.TestCase):
