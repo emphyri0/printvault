@@ -72,6 +72,30 @@
     const h = Math.floor(min / 60), m = min % 60;
     return h ? `${h}u ${String(m).padStart(2, "0")}m` : `${m}m`;
   }
+  function fmt(v) { return Number(v).toLocaleString("nl-BE", {maximumFractionDigits: 1}); }
+  function amsName(id) {
+    const n = Number(id);
+    return Number.isInteger(n) && n >= 0 && n < 4 ? "AMS " + "ABCD"[n] : "AMS " + id;
+  }
+  function spark(values, title) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "spark");
+    svg.setAttribute("viewBox", "0 0 100 24");
+    svg.setAttribute("preserveAspectRatio", "none");
+    const t = document.createElementNS(ns, "title");
+    t.textContent = title + (values.length ? `: ${fmt(Math.min(...values))}–${fmt(Math.max(...values))}` : ": nog geen metingen");
+    svg.append(t);
+    if (values.length > 1) {
+      const lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
+      const pts = values.map((v, i) => `${(i / (values.length - 1) * 100).toFixed(1)},${(22 - (v - lo) / span * 20).toFixed(1)}`);
+      const line = document.createElementNS(ns, "polyline");
+      line.setAttribute("points", pts.join(" "));
+      line.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.append(line);
+    }
+    return svg;
+  }
   function render(data) {
     const printers = (data.printers || []);
     box.replaceChildren();
@@ -95,6 +119,32 @@
         meta.textContent = `${p.percent ?? "–"}% · nog ${dur(p.remaining_min)} · laag ${p.layer ?? "–"}/${p.total_layers ?? "–"}`
           + (p.error && p.gcode_state === "FAILED" ? ` · fout ${p.error}` : "");
         card.append(meta);
+      }
+      if (p.gcode_state === "FAILED" && p.error_text) card.append(el("div", "meta liveerr", p.error_text));
+      for (const h of (p.hms || [])) {
+        const line = el("div", "meta livehms");
+        line.append("HMS ");
+        // de kaart is zelf een link naar de print; dan geen geneste link
+        const a = el(p.print_id ? "span" : "a", null, h.code);
+        if (!p.print_id) { a.href = h.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
+        line.append(a, h.text ? ` · ${h.text}` : (h.module ? ` · ${h.module}` : ""));
+        card.append(line);
+      }
+      const ams = p.ams || [];
+      if (ams.length) {
+        const list = el("div", "liveams");
+        for (const u of ams) {
+          const row = el("div", "amsrow");
+          row.append(el("span", "amsname", amsName(u.id)));
+          const hum = u.humidity_pct != null ? `${fmt(u.humidity_pct)} %` : (u.humidity_level != null ? `niveau ${u.humidity_level}` : "–");
+          row.append(el("span", null, `💧 ${hum}`), el("span", null, u.temp != null ? `🌡 ${fmt(u.temp)} °C` : ""));
+          const hist = ((p.ams_history || {})[u.id] || []);
+          const useLevel = u.humidity_pct == null;
+          row.append(spark(hist.map(r => useLevel ? r[2] : r[1]).filter(v => v != null),
+                           `Vochtigheid laatste 24 uur (${useLevel ? "niveau" : "%"})`));
+          list.append(row);
+        }
+        card.append(list);
       }
       box.append(card);
     }

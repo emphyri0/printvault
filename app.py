@@ -64,6 +64,16 @@ CREATE TABLE IF NOT EXISTS print_ams (
     tray_type TEXT,
     tray_color TEXT
 );
+CREATE TABLE IF NOT EXISTS ams_readings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    printer_id INTEGER NOT NULL REFERENCES printers(id) ON DELETE CASCADE,
+    ams_id TEXT NOT NULL,
+    humidity_pct REAL,
+    humidity_level INTEGER,
+    temp REAL,
+    recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ams_readings ON ams_readings(printer_id, ams_id, recorded_at);
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
@@ -669,7 +679,22 @@ def api_live():
         data["available"] = True
     except Exception:
         data = {"available": False, "printers": []}
+    for p in data.get("printers") or []:
+        if isinstance(p, dict) and p.get("ams"):
+            p["ams_history"] = ams_history(p.get("printer_id"))
     return jsonify(data)
+
+
+def ams_history(printer_id, hours=24):
+    """AMS-metingen van de laatste `hours` uur per unit: {ams_id: [[tijd, %, niveau, °C], …]}."""
+    rows = get_db().execute(
+        "SELECT ams_id, recorded_at, humidity_pct, humidity_level, temp FROM ams_readings "
+        "WHERE printer_id = ? AND datetime(recorded_at) >= datetime('now', ?) ORDER BY recorded_at",
+        (printer_id, f"-{int(hours)} hours")).fetchall()
+    out = {}
+    for r in rows:
+        out.setdefault(r["ams_id"], []).append([r["recorded_at"], r["humidity_pct"], r["humidity_level"], r["temp"]])
+    return out
 
 
 # ---------- MakerWorld-import ----------

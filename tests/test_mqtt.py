@@ -2,6 +2,7 @@
 
 Draaien:  python3 -m unittest discover -s tests
 """
+import json
 import os
 import sqlite3
 import sys
@@ -193,6 +194,52 @@ class TrackerTest(unittest.TestCase):
         t.handle({"print": {"gcode_state": "FINISH"}})
         self.assertEqual(self.prints()[0]["status"], "gelukt")
 
+    def ams_report(self, hum="3", raw="23", temp="24.6", **extra):
+        return {"print": {"ams": {"ams": [{"id": "0", "humidity": hum, "humidity_raw": raw, "temp": temp, "tray": []},
+                                          {"id": "1", "humidity": "5", "temp": "0.0", "tray": []}]}, **extra}}
+
+    def readings(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            return [tuple(r) for r in db.execute(
+                "SELECT ams_id, humidity_pct, humidity_level, temp, recorded_at FROM ams_readings ORDER BY id")]
+
+    def test_ams_units_parsing(self):
+        units = ml.ams_units(self.ams_report()["print"])
+        self.assertEqual(units, [{"id": "0", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6},
+                                 {"id": "1", "humidity_pct": None, "humidity_level": 5, "temp": None}])
+        self.assertEqual(ml.ams_units({"ams": {"ams": [{"id": "0", "temp": "x"}, "rommel"]}}), [])
+        self.assertEqual(ml.ams_units({}), [])
+
+    def test_ams_readings_max_one_per_10_min(self):
+        t = self.tracker()
+        t.handle(self.ams_report())
+        self.assertEqual(self.readings(), [("0", 23.0, 3, 24.6, "2026-11-18T19:00:00+01:00"),
+                                           ("1", None, 5, None, "2026-11-18T19:00:00+01:00")])
+        for _ in range(9):                       # elke minuut een bericht: niets extra
+            self.clock.advance(1)
+            t.handle(self.ams_report(raw="25"))
+        self.assertEqual(len(self.readings()), 2)
+        self.clock.advance(1)                    # 10 minuten na de vorige
+        t.handle(self.ams_report(raw="26", temp="25.1"))
+        rows = self.readings()
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[2], ("0", 26.0, 3, 25.1, "2026-11-18T19:10:00+01:00"))
+
+    def test_ams_throttle_survives_restart(self):
+        self.tracker().handle(self.ams_report())
+        self.clock.advance(5)
+        t2 = self.tracker()
+        t2.handle(self.ams_report())
+        self.assertEqual(len(self.readings()), 2)
+        self.clock.advance(5)
+        t2.handle(self.ams_report())
+        self.assertEqual(len(self.readings()), 4)
+
+    def test_live_has_ams(self):
+        t = self.tracker()
+        t.handle(self.ams_report(gcode_state="IDLE"))
+        self.assertEqual(t.live()["ams"][0], {"id": "0", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6})
+
     def test_ignores_non_report(self):
         t = self.tracker()
         t.handle({"info": {"command": "get_version"}})
@@ -265,6 +312,32 @@ class AppTest(unittest.TestCase):
         self.assertIn("hmscode/0300_400C", html)
         html = self.c.get("/print/2").get_data(as_text=True)
         self.assertIn(">0700-8011</a>", html)
+
+    def test_api_live_adds_ams_history(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            pid = db.execute("INSERT INTO printers (name) VALUES ('P2S')").lastrowid
+            now = datetime.now(TZ).replace(microsecond=0)
+            db.executemany("INSERT INTO ams_readings (printer_id, ams_id, humidity_pct, humidity_level, temp, recorded_at) "
+                           "VALUES (?, '0', ?, 3, 24.0, ?)",
+                           [(pid, 30.0, (now - timedelta(hours=30)).isoformat()),   # te oud
+                            (pid, 22.0, (now - timedelta(hours=2)).isoformat()),
+                            (pid, 21.0, (now - timedelta(minutes=5)).isoformat())])
+        live = {"printers": [{"printer_id": pid, "ams": [{"id": "0"}]}, {"printer_id": 99, "ams": []}]}
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = json.dumps(live).encode()
+        with mock.patch.object(app.urllib.request, "urlopen", return_value=resp):
+            data = self.c.get("/api/live").get_json()
+        self.assertTrue(data["available"])
+        self.assertEqual([r[1] for r in data["printers"][0]["ams_history"]["0"]], [22.0, 21.0])
+        self.assertNotIn("ams_history", data["printers"][1])
+
+    def test_ams_readings_removed_with_printer(self):
+        with ml.connect_db(app.DB_PATH) as db:
+            pid = db.execute("INSERT INTO printers (name) VALUES ('P2S')").lastrowid
+            db.execute("INSERT INTO ams_readings (printer_id, ams_id, recorded_at) VALUES (?, '0', 'x')", (pid,))
+        self.c.post(f"/printers/{pid}/delete")
+        with ml.connect_db(app.DB_PATH) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM ams_readings").fetchone()[0], 0)
 
     def test_live_unavailable(self):
         app.LIVE_URL = "http://127.0.0.1:9/live"

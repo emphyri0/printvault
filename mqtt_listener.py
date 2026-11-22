@@ -16,7 +16,7 @@ import ssl
 import threading
 import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,7 @@ LIVE_HOST = os.environ.get("LIVE_HOST", "127.0.0.1")
 LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
 RELOAD_SECONDS = int(os.environ.get("MQTT_RELOAD_SECONDS", "60"))
 
+AMS_INTERVAL = timedelta(minutes=10)   # hoogstens één opgeslagen AMS-meting per unit per 10 minuten
 ACTIVE = {"PREPARE", "RUNNING", "PAUSE"}
 DONE = {"FINISH": "gelukt", "FAILED": "mislukt"}
 
@@ -61,6 +62,29 @@ def ams_slots(state):
     return slots
 
 
+def _num(value, cast=float):
+    """'24.6' → 24.6; leeg, ongeldig of exact 0 (sensor ontbreekt of nog geen meting) → None."""
+    try:
+        v = cast(float(value))
+    except (TypeError, ValueError):
+        return None
+    return v or None
+
+
+def ams_units(state):
+    """Vochtigheid en temperatuur per AMS-unit. humidity_pct (humidity_raw) sturen alleen nieuwere
+    firmwareversies; humidity_level is Bambu's niveau 1–5."""
+    units = []
+    for unit in (state.get("ams") or {}).get("ams") or []:
+        if not isinstance(unit, dict) or unit.get("id") is None:
+            continue
+        u = {"id": str(unit["id"]), "humidity_pct": _num(unit.get("humidity_raw")),
+             "humidity_level": _num(unit.get("humidity"), int), "temp": _num(unit.get("temp"))}
+        if any(u[k] is not None for k in ("humidity_pct", "humidity_level", "temp")):
+            units.append(u)
+    return units
+
+
 @contextmanager
 def connect_db(db_path):
     """Verbinding die bij succes commit en altijd gesloten wordt."""
@@ -88,6 +112,7 @@ class PrinterTracker:
         self.task_id = None
         self.connected = False
         self.last_message = None
+        self.ams_saved = {}       # ams_id -> tijdstip van de laatst opgeslagen meting
         self.lock = threading.Lock()
 
     # ---------- berichten ----------
@@ -99,6 +124,7 @@ class PrinterTracker:
         with self.lock:
             deep_merge(self.state, report)
             self.last_message = self.clock()
+            self._record_ams()
             new = self.state.get("gcode_state")
             task = str(self.state.get("task_id") or "") or None
             if new != self.gcode_state:
@@ -210,6 +236,27 @@ class PrinterTracker:
                        (note, print_id))
         log.warning("printer %s: print %s had geen einde, gemarkeerd als 'onbekend'", self.printer_id, print_id)
 
+    def _record_ams(self):
+        units = ams_units(self.state)
+        now = self.clock()
+        unknown = [u["id"] for u in units if u["id"] not in self.ams_saved]
+        if unknown:   # eerste bericht na een (her)start: laatste meting per unit uit de database
+            with connect_db(self.db_path) as db:
+                for ams_id in unknown:
+                    row = db.execute("SELECT MAX(recorded_at) FROM ams_readings WHERE printer_id = ? AND ams_id = ?",
+                                     (self.printer_id, ams_id)).fetchone()
+                    self.ams_saved[ams_id] = datetime.fromisoformat(row[0]) if row[0] else None
+        due = [u for u in units if self.ams_saved[u["id"]] is None or now - self.ams_saved[u["id"]] >= AMS_INTERVAL]
+        if not due:
+            return
+        with connect_db(self.db_path) as db:
+            db.executemany("INSERT INTO ams_readings (printer_id, ams_id, humidity_pct, humidity_level, temp, recorded_at) "
+                           "VALUES (?, ?, ?, ?, ?, ?)",
+                           [(self.printer_id, u["id"], u["humidity_pct"], u["humidity_level"], u["temp"], now.isoformat())
+                            for u in due])
+        for u in due:
+            self.ams_saved[u["id"]] = now
+
     def _save_ams(self, db, print_id):
         slots = ams_slots(self.state)
         if not slots:
@@ -242,6 +289,7 @@ class PrinterTracker:
                 "error": error_code(s.get("print_error")),
                 "error_text": (bambu_errors.describe_print_error(s.get("print_error")) or {}).get("text"),
                 "hms": bambu_errors.describe_hms_list(s.get("hms")),
+                "ams": ams_units(s),
                 "updated_at": self.last_message.isoformat() if self.last_message else None,
             }
 

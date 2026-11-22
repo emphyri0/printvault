@@ -74,6 +74,13 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .livename { margin: .35rem 0 .45rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; margin-bottom: .35rem; }
 .bar span { display: block; height: 100%; background: #7c4dd6; transition: width .5s; }
+.liveerr { color: var(--danger); margin-top: .2rem; }
+.livehms { margin-top: .2rem; }
+.liveams { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .5rem; display: grid; gap: .3rem; }
+.amsrow { display: grid; grid-template-columns: 4.2rem auto auto 1fr; align-items: center; gap: .6rem; font-size: .85rem; }
+.amsname { font-weight: 600; }
+.spark { width: 100%; min-width: 3rem; height: 1.2rem; }
+.spark polyline { fill: none; stroke: #3b6fd6; stroke-width: 1.5; }
 
 .form fieldset.mqtt { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .9rem 1rem;
   border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem 1rem; margin: 0; }
