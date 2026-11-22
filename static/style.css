@@ -81,6 +81,11 @@ input, select, textarea { font: inherit; color: var(--text); background: var(--p
 .amsname { font-weight: 600; }
 .spark { width: 100%; min-width: 3rem; height: 1.2rem; }
 .spark polyline { fill: none; stroke: #3b6fd6; stroke-width: 1.5; }
+.liveitem { display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
+.livecam { display: grid; gap: .4rem; }
+.camctl { display: flex; gap: .4rem; flex-wrap: wrap; }
+.livecam img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 10px;
+  border: 1px solid var(--line); }
 
 .form fieldset.mqtt { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .9rem 1rem;
   border: 1px solid var(--line); border-radius: 10px; padding: .9rem 1rem 1rem; margin: 0; }

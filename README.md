@@ -12,6 +12,7 @@ Een kleine webapp om je 3D-prints bij te houden: foto's, modelbestanden (3mf, st
 - AMS-vochtigheid en -temperatuur per unit, met een verloop van de laatste 24 uur op de statuskaart
 - Onderhoudstaken per printer met een interval in printuren en/of dagen
 - Meldingen via ntfy: print klaar, print mislukt, onderhoud vervallen (elk apart aan/uit)
+- Live camerabeeld van de printer op de statuskaart, en automatisch een camerafoto bij de print als die klaar is of mislukt
 
 ## Live koppeling (MQTT)
 
@@ -24,6 +25,16 @@ Vul bij **Printers → Bewerk** het IP-adres, serienummer en de access code in e
 - Status *onbekend*: de listener zag het einde van de print niet (bv. omdat hij niet verbonden was). Controleer zelf hoe de print afliep.
 - AMS: per unit hoogstens één meting per 10 minuten in `ams_readings` (vochtigheid in % als de firmware `humidity_raw` stuurt, anders Bambu's niveau 1–5, en temperatuur).
 - Logboek: `docker compose logs -f printvault-mqtt`
+
+## Camera
+
+Printers met een IP-adres en access code (X1, P2S, H2D: RTSPS op poort 322) krijgen een camerabeeld. Op de printer moet *LAN-liveview* aan staan.
+
+- Op de statuskaart: knop **📷 Camera**; bij **Printers** een link die het beeld in een nieuw tabblad opent.
+- `/printers/<id>/camera.mjpg`: live beeld als MJPEG (± 5 fps, max. 1280 breed; aan te passen met `CAMERA_FPS` en `CAMERA_WIDTH`). ffmpeg in de container zet de stream om. Per printer is er één verbinding, gedeeld door alle kijkers. Die stopt 15 seconden nadat de laatste kijker weg is; een verborgen tabblad stopt de stream ook.
+- `/printers/<id>/snapshot.jpg`: één beeld in volle resolutie.
+- Gaat een print live naar *klaar* of *mislukt*, dan hangt de listener er een camerafoto aan (`camera-gelukt-…jpg` / `camera-mislukt-…jpg`). Heeft de print al een omslagfoto (gekozen, een eigen foto of een slicer-/MakerWorld-thumbnail), dan blijft die de omslag; anders wordt de camerafoto de omslag. Lukt het beeld niet, dan staat dat in de log en loopt de rest gewoon door. Een einde dat de listener pas na een herstart opmerkt, krijgt geen foto.
+- De access code komt niet in logs of foutmeldingen terecht.
 
 ## Foutcodes
 

@@ -15,18 +15,21 @@ import sqlite3
 import ssl
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import bambu_errors
+import camera
 import maintenance
 import notify
 from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code wordt ook door app gebruikt)
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
+UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
 LIVE_HOST = os.environ.get("LIVE_HOST", "127.0.0.1")
 LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
@@ -106,6 +109,7 @@ class PrinterTracker:
     def __init__(self, printer_id, printer_name, db_path, clock=now_local, notifier=None):
         self.printer_id = printer_id
         self.notifier = notifier  # callable(kind, title, message, tags, priority) of None
+        self.snapshotter = None   # callable(print_id, status): camerabeeld bij het einde, of None
         self.printer_name = printer_name
         self.db_path = db_path
         self.clock = clock
@@ -218,8 +222,17 @@ class PrinterTracker:
                 (status, now.isoformat(), minutes, int(err) if err else None, fail_note, fail_reason, notes, print_id))
             self._save_ams(db, print_id)
         log.info("printer %s: print %s %s", self.printer_id, print_id, status)
-        if seen_live:   # geen melding voor een einde dat pas na een herstart opgemerkt wordt
+        if seen_live:   # geen melding of foto voor een einde dat pas na een herstart opgemerkt wordt
             self._notify(row["name"], status, minutes, fail_note)
+            self._snapshot(print_id, status)
+
+    def _snapshot(self, print_id, status):
+        if self.snapshotter is None:
+            return
+        try:
+            self.snapshotter(print_id, status)
+        except Exception:
+            log.exception("printer %s: camerabeeld starten mislukt", self.printer_id)
 
     def _notify(self, name, status, minutes, fail_note):
         if self.notifier is None:
@@ -314,6 +327,37 @@ class PrinterTracker:
             }
 
 
+def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
+    """Hangt een camerabeeld als foto aan de print. Wordt het geen omslagfoto als de print er al een heeft
+    (gekozen, of de foto die de app nu als omslag toont); anders wel."""
+    stored = f"{uuid.uuid4().hex}.jpg"
+    name = f"camera-{status}-{when:%Y%m%d-%H%M}.jpg"
+    path = os.path.join(upload_dir, stored)
+    os.makedirs(upload_dir, exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(jpeg)
+    try:
+        with connect_db(db_path) as db:
+            row = db.execute("SELECT cover_file_id FROM prints WHERE id = ?", (print_id,)).fetchone()
+            if row is None:
+                raise LookupError(f"print {print_id} bestaat niet meer")
+            # dezelfde volgorde als COVER_SQL in app.py: gekozen foto, eerste echte foto, dan thumbnails
+            current = db.execute(
+                "SELECT id FROM files WHERE print_id = ? AND kind = 'photo' ORDER BY (id = ?) DESC, "
+                "(original_name LIKE 'thumbnail-plaat-%' OR original_name LIKE 'makerworld-cover.%'), id LIMIT 1",
+                (print_id, row["cover_file_id"] or 0)).fetchone()
+            file_id = db.execute(
+                "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?, 'photo', ?, ?, ?)",
+                (print_id, stored, name, len(jpeg))).lastrowid
+            # de omslag vastzetten, zodat de nieuwe foto een bestaande omslag (ook een thumbnail) niet vervangt
+            db.execute("UPDATE prints SET cover_file_id = ? WHERE id = ?",
+                       (current["id"] if current else file_id, print_id))
+    except BaseException:
+        os.remove(path)
+        raise
+    return file_id
+
+
 class PrinterConnection:
     """Eén MQTT-verbinding (alleen subscribe) met automatisch herverbinden door paho."""
 
@@ -374,6 +418,7 @@ class Supervisor:
         self.db_path = db_path
         self.notifier = notify.Notifier(db_path)
         self.connections = {}   # printer_id -> (config-sleutel, PrinterConnection)
+        self.cfgs = {}          # printer_id -> laatst gelezen instellingen
         self.trackers = {}      # printer_id -> PrinterTracker
 
     def configs(self):
@@ -385,6 +430,7 @@ class Supervisor:
 
     def sync(self):
         wanted = self.configs()
+        self.cfgs = wanted
         for pid in list(self.connections):
             key, conn = self.connections[pid]
             cfg = wanted.get(pid)
@@ -397,6 +443,7 @@ class Supervisor:
             tracker = self.trackers.get(pid)
             if tracker is None:
                 tracker = self.trackers[pid] = PrinterTracker(pid, cfg["name"], self.db_path, notifier=self.notifier)
+                tracker.snapshotter = lambda print_id, status, pid=pid: self.take_snapshot(pid, print_id, status)
             tracker.printer_name = cfg["name"]
             if pid not in self.connections:
                 conn = PrinterConnection(cfg, tracker)
@@ -405,6 +452,23 @@ class Supervisor:
 
     def live(self):
         return [t.live() for t in list(self.trackers.values())]
+
+    def take_snapshot(self, printer_id, print_id, status):
+        """Camerabeeld op de achtergrond, zodat de MQTT-verwerking niet wacht."""
+        cfg = self.cfgs.get(printer_id)
+        if cfg is None:
+            return
+        threading.Thread(target=self._snapshot_worker, args=(cfg, print_id, status),
+                         daemon=True, name=f"snapshot-{print_id}").start()
+
+    def _snapshot_worker(self, cfg, print_id, status):
+        try:
+            jpeg = camera.grab_snapshot(cfg["ip"], cfg["access_code"])
+            file_id = save_snapshot(self.db_path, UPLOAD_DIR, print_id, jpeg, status, now_local())
+            log.info("printer %s: camerabeeld bij print %s opgeslagen (bestand %s)", cfg["id"], print_id, file_id)
+        except Exception as e:
+            log.warning("printer %s: camerabeeld bij print %s mislukt: %s",
+                        cfg["id"], print_id, camera.redact(e, cfg["access_code"]))
 
     def run(self):
         while True:

@@ -96,10 +96,58 @@
     }
     return svg;
   }
+  // Per printer een vast blok (kaart + camera). Alleen de kaart wordt bij elke poll vervangen,
+  // zodat een open camerastream niet telkens herstart.
+  const items = new Map();
+  function camPanel(id) {
+    const wrap = el("div", "livecam");
+    const bar = el("div", "camctl");
+    const btn = el("button", "btn ghost", "📷 Camera");
+    btn.type = "button";
+    const full = el("a", "btn ghost", "↗ Nieuw tabblad");
+    full.href = `/printers/${id}/camera.mjpg`;
+    full.target = "_blank";
+    full.rel = "noopener";
+    full.hidden = true;
+    bar.append(btn, full);
+    const img = el("img");
+    img.alt = "Camerabeeld";
+    img.hidden = true;
+    const msg = el("div", "meta");
+    msg.hidden = true;
+    wrap.append(bar, img, msg);
+    let open = false;
+    function start() {
+      msg.textContent = "Camerabeeld laden…";
+      msg.hidden = false;
+      img.hidden = false;
+      img.src = `/printers/${id}/camera.mjpg?t=${Date.now()}`;
+    }
+    function stop() { img.removeAttribute("src"); img.hidden = true; msg.hidden = true; }
+    img.addEventListener("load", () => { msg.hidden = true; });
+    img.addEventListener("error", () => {
+      if (!open || !img.getAttribute("src")) return;
+      img.hidden = true;
+      msg.textContent = "Geen camerabeeld. Staat LAN-liveview aan op de printer?";
+      msg.hidden = false;
+    });
+    btn.addEventListener("click", () => {
+      open = !open;
+      btn.textContent = open ? "📷 Camera sluiten" : "📷 Camera";
+      full.hidden = !open;
+      open ? start() : stop();
+    });
+    // geen stream naar een tabblad dat niemand bekijkt
+    document.addEventListener("visibilitychange", () => {
+      if (!open) return;
+      document.hidden ? stop() : start();
+    });
+    return wrap;
+  }
   function render(data) {
     const printers = (data.printers || []);
-    box.replaceChildren();
     box.hidden = !printers.length;
+    const seen = new Set();
     for (const p of printers) {
       const active = ["PREPARE", "RUNNING", "PAUSE"].includes(p.gcode_state);
       const card = el(p.print_id ? "a" : "div", "livecard" + (active ? " active" : ""));
@@ -146,7 +194,23 @@
         }
         card.append(list);
       }
-      box.append(card);
+      let item = items.get(p.printer_id);
+      if (!item) {
+        item = {root: el("div", "liveitem"), card: null, cam: camPanel(p.printer_id)};
+        item.root.append(item.cam);
+        items.set(p.printer_id, item);
+      }
+      if (item.card) item.card.replaceWith(card); else item.root.prepend(card);
+      item.card = card;
+      box.append(item.root);   // volgorde volgen; verplaatsen breekt de stream niet
+      seen.add(p.printer_id);
+    }
+    for (const [id, item] of items) {
+      if (!seen.has(id)) {
+        item.cam.querySelector("img").removeAttribute("src");
+        item.root.remove();
+        items.delete(id);
+      }
     }
   }
   async function poll() {

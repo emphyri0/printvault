@@ -8,11 +8,12 @@ import uuid
 from contextlib import closing
 from datetime import date, datetime
 
-from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, request,
+from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.utils import secure_filename
 
 import bambu_errors
+import camera
 import maintenance
 import notify
 import slicer
@@ -688,6 +689,45 @@ def delete_printer(printer_id):
     db.commit()
     flash("Printer verwijderd. De prints zelf blijven bewaard.", "ok")
     return redirect(url_for("printers"))
+
+
+# ---------- Camera ----------
+
+cameras = camera.CameraManager()
+
+
+def camera_printer(printer_id):
+    pr = get_printer(printer_id)
+    if not pr["ip"] or not pr["access_code"]:
+        abort(404)
+    return pr
+
+
+@app.route("/printers/<int:printer_id>/camera.mjpg")
+def camera_stream(printer_id):
+    pr = camera_printer(printer_id)
+    cam = cameras.get(printer_id, pr["ip"], pr["access_code"])
+
+    def generate():
+        for frame in cam.frames():
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame)
+                   + frame + b"\r\n")
+
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame",
+                    headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+
+@app.route("/printers/<int:printer_id>/snapshot.jpg")
+def camera_snapshot(printer_id):
+    pr = camera_printer(printer_id)
+    cam = cameras.peek(printer_id)
+    jpeg = cam.latest() if cam is not None and cam.url == camera.rtsp_url(pr["ip"], pr["access_code"]) else None
+    if jpeg is None:
+        try:
+            jpeg = camera.grab_snapshot(pr["ip"], pr["access_code"])
+        except camera.CameraError as e:
+            return Response(str(e), status=502, mimetype="text/plain")
+    return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 # ---------- Onderhoud ----------
