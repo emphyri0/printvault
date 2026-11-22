@@ -1,91 +1,105 @@
 # Printvault
 
-Een kleine webapp om je 3D-prints bij te houden: foto's, modelbestanden (3mf, stl, …), filament, printtijd, instellingen en notities.
+A small web app to keep track of your 3D prints: photos, model files (3mf, stl, …), filament, print time, settings and notes.
 
-## Functies
+## Features
 
-- Prints met foto's, modelbestanden (3mf, stl, step, obj, gcode), filament, printtijd, instellingen en notities
-- Printers met foto, en per print kiezen op welke printer hij gemaakt is
-- Importeren vanaf MakerWorld: plak een modellink en titel, ontwerper, cover, filament, gewicht en printtijd worden ingevuld (het 3mf-bestand voeg je zelf toe)
-- Live koppeling met Bambu Lab-printers via MQTT (alleen lezen, cloudmodus mag aan blijven): prints worden automatisch aangemaakt en afgesloten, met AMS-slots, en de homepage toont een live statuskaart
-- Foutcodes (print_error en HMS) als leesbare tekst, met een voorgestelde faalreden bij mislukte prints
-- AMS-vochtigheid en -temperatuur per unit, met een verloop van de laatste 24 uur op de statuskaart
-- Onderhoudstaken per printer met een interval in printuren en/of dagen
-- Meldingen via ntfy: print klaar, print mislukt, onderhoud vervallen (elk apart aan/uit)
-- Live statuskaart zoals het printerscherm: fase, voortgang, eindtijdstip, temperaturen, snelheid, ventilatoren en actief AMS-slot
-- Temperatuur- en faseverloop per print als grafiek op de detailpagina
-- Live camerabeeld van de printer op de statuskaart, en automatisch een camerafoto bij de print als die klaar is of mislukt
+- Prints with photos, model files (3mf, stl, step, obj, gcode), filament, print time, settings and notes
+- Printers with a photo, and per print which printer made it
+- Import from MakerWorld: paste a model link and the title, designer, cover, filament, weight and print time are filled in (you add the 3mf file yourself)
+- Live connection with Bambu Lab printers via MQTT (read-only, cloud mode can stay on): prints are created and closed automatically, with AMS slots, and the home page shows a live status card
+- Error codes (print_error and HMS) as readable text, with a suggested fail reason for failed prints
+- AMS humidity and temperature per unit, with the last 24 hours on the status card
+- Maintenance tasks per printer with an interval in print hours and/or days
+- Notifications via ntfy: print finished, print failed, maintenance due (each can be switched on/off)
+- Live status card like the printer screen: stage, progress, finish time, temperatures, speed, fans and active AMS slot
+- Temperature and stage history per print as a chart on the detail page
+- Live camera image of the printer on the status card, and an automatic camera photo on the print when it finishes or fails
 
-## Live koppeling (MQTT)
+## Values and labels
 
-Vul bij **Printers → Bewerk** het IP-adres, serienummer en de access code in en vink *Live koppeling aan* aan. De service `printvault-mqtt` leest de instellingen elke minuut opnieuw in; meer printers toevoegen kan zonder herstart.
+Internal values are lowercase snake_case; the UI shows them through a label mapping (`LABELS` in `app.py`):
 
-- Verbinding: `mqtts://<ip>:8883`, gebruiker `bblp`, wachtwoord = access code, TLS zonder certificaatcontrole. Alleen subscribe op `device/<serienummer>/report`; er wordt niets naar de printer gestuurd.
-- `PREPARE`/`RUNNING` → print met status *bezig*; `FINISH` → *gelukt* met eindtijd en duur; `FAILED` → *mislukt* met de foutcode van de printer.
-- Herstart de listener tijdens een print, dan wordt het bestaande *bezig*-record hervat (herkend aan `task_id`). Zag de listener het einde van een print niet en start er een nieuwe, dan krijgt de oude status *onbekend* met een notitie (*opnieuw* is alleen voor prints die je bewust opnieuw wilt maken).
-- Live status (percentage, resterende tijd, laag) staat alleen in het geheugen van de listener en is via `/api/live` op te vragen.
-- Status *onbekend*: de listener zag het einde van de print niet (bv. omdat hij niet verbonden was). Controleer zelf hoe de print afliep.
-- AMS: per unit hoogstens één meting per 10 minuten in `ams_readings` (vochtigheid in % als de firmware `humidity_raw` stuurt, anders Bambu's niveau 1–5, en temperatuur).
-- Logboek: `docker compose logs -f printvault-mqtt`
+| Kind | Internal values |
+|---|---|
+| Status | `planned`, `printing`, `succeeded`, `failed`, `unknown`, `reprint` |
+| Fail reason | `adhesion`, `warping`, `spaghetti`, `clog`, `power_loss`, `other` |
+| Speed profile | `silent`, `standard`, `sport`, `ludicrous` |
+
+Dates are shown as `22 Nov 2026` and times as `22 Nov 2026, 16:42` (24-hour clock).
+
+Upgrading from the Dutch version: on start-up, `init_db()` migrates the old Dutch values (status, fail reason, speed profile, nozzle type, material "Ander", the listener's own sentences in the notes, and maintenance tasks that still have their Dutch default name). The migration only touches the old values, so running it again changes nothing. Names and notes you wrote yourself stay as they are. The old URLs `/instellingen` and `/printers/<id>/onderhoud` redirect to `/settings` and `/printers/<id>/maintenance`.
+
+## Live connection (MQTT)
+
+Under **Printers → Edit**, fill in the IP address, serial number and access code and tick *Live connection on*. The `printvault-mqtt` service re-reads the settings every minute; adding printers needs no restart.
+
+- Connection: `mqtts://<ip>:8883`, user `bblp`, password = access code, TLS without certificate verification. Subscribe only on `device/<serial>/report`; nothing is sent to the printer.
+- `PREPARE`/`RUNNING` → print with status *Printing*; `FINISH` → *Succeeded* with end time and duration; `FAILED` → *Failed* with the printer's error code.
+- If the listener restarts during a print, the existing *Printing* record is resumed (recognised by `task_id`). If the listener missed the end of a print and a new one starts, the old one gets status *Unknown* with a note (*Reprint* is only for prints you deliberately want to make again).
+- The live status (percentage, time left, layer) lives only in the listener's memory and is available through `/api/live`.
+- Status *Unknown*: the listener did not see the print end (e.g. because it was not connected). Check yourself how the print went.
+- AMS: at most one reading per unit per 10 minutes in `ams_readings` (humidity in % when the firmware sends `humidity_raw`, otherwise Bambu's level 1–5, plus temperature).
+- Log: `docker compose logs -f printvault-mqtt`
 
 ## Camera
 
-Printers met een IP-adres en access code (X1, P2S, H2D: RTSPS op poort 322) krijgen een camerabeeld. Op de printer moet *LAN-liveview* aan staan.
+Printers with an IP address and access code (X1, P2S, H2D: RTSPS on port 322) get a camera image. *LAN live view* must be enabled on the printer.
 
-- Op de statuskaart: knop **📷 Camera**; bij **Printers** een link die het beeld in een nieuw tabblad opent.
-- `/printers/<id>/camera.mjpg`: live beeld als MJPEG (± 5 fps, max. 1280 breed; aan te passen met `CAMERA_FPS` en `CAMERA_WIDTH`). ffmpeg in de container zet de stream om. Per printer is er één verbinding, gedeeld door alle kijkers. Die stopt 15 seconden nadat de laatste kijker weg is; een verborgen tabblad stopt de stream ook.
-- `/printers/<id>/snapshot.jpg`: één beeld in volle resolutie. Het beeld wordt ~20 s per printer bewaard (ook een mislukte poging), zodat meerdere tabbladen de printer niet extra belasten; loopt de live stream, dan komt het beeld daaruit.
-- Op de homepage toont de kaart van een print met status *bezig* zonder eigen omslag (een thumbnail telt niet; die is de reserve als er geen camerabeeld is) het camerabeeld (label *live*), elke 30 s ververst. Meldt de listener dat de print niet meer loopt, dan volgt nog één laatste beeld (label *einde*); na herladen staat er de eindfoto die de listener aan de print hing.
-- Gaat een print live naar *klaar* of *mislukt*, dan hangt de listener er een camerafoto aan (`camera-gelukt-…jpg` / `camera-mislukt-…jpg`). Een zelf gekozen omslag of een eerder toegevoegde eigen foto blijft de omslag; een slicer-/MakerWorld-thumbnail wordt door de camerafoto vervangen (de thumbnail blijft wel bij de foto's). Lukt het beeld niet, dan staat dat in de log en loopt de rest gewoon door. Een einde dat de listener pas na een herstart opmerkt, krijgt geen foto.
-- De access code komt niet in logs of foutmeldingen terecht.
+- On the status card: the **📷 Camera** button; under **Printers** a link that opens the image in a new tab.
+- `/printers/<id>/camera.mjpg`: live image as MJPEG (± 5 fps, max. 1280 wide; adjustable with `CAMERA_FPS` and `CAMERA_WIDTH`). ffmpeg in the container converts the stream. There is one connection per printer, shared by all viewers. It stops 15 seconds after the last viewer leaves; a hidden tab also stops the stream.
+- `/printers/<id>/snapshot.jpg`: a single image in full resolution. The image is kept ~20 s per printer (a failed attempt too), so several tabs do not put extra load on the printer; when the live stream is running, the image comes from there.
+- On the home page, the card of a print with status *Printing* without an own cover (a thumbnail does not count; it is the fallback when there is no camera image) shows the camera image (label *live*), refreshed every 30 s. When the listener reports that the print is no longer running, one last image follows (label *end*); after a reload the card shows the end photo the listener attached to the print.
+- When a print goes live to *Succeeded* or *Failed*, the listener attaches a camera photo (`camera-succeeded-…jpg` / `camera-failed-…jpg`; photos from the Dutch version keep their old names). A cover you chose or an own photo added earlier stays the cover; a slicer/MakerWorld thumbnail is replaced by the camera photo (the thumbnail stays among the photos). If the image fails, that is logged and everything else carries on. An end the listener only notices after a restart gets no photo.
+- The access code never ends up in logs or error messages.
 
-## Statuskaart en tijdreeks
+## Status card and time series
 
-- De statuskaart toont wat het printerscherm toont: fase in leesbare tekst (`stg_cur`), plaat x van y, %, laag, resterende tijd en eindtijdstip, nozzle-/bed-/kamertemperatuur (huidig/doel; de P2S heeft geen doel voor de kamer), snelheidsprofiel, ventilatoren (onderdeel, aux, kamer, heatbreak) en het actieve AMS-slot met kleur. Links staat het camerabeeld (als de print geen eigen omslag heeft), anders de omslag of de printerfoto.
-- Velden die ontbreken (ander model, oudere firmware) vallen gewoon weg. De vertaling van de ruwe velden staat in `bambu_status.py`.
-- Bij de start van een print vult de listener in het printrecord in: nozzlediameter, nozzletype (bv. *Gehard staal (HS01)*), plaat (`device.plate.cur_id`, bv. `P0101`; de bron heeft daar geen leesbare naam voor), plaatnummer en aantal platen, snelheidsprofiel en of spaghettidetectie en eerstelaaginspectie aanstonden. Alleen velden die nog leeg zijn; wat je zelf invulde (of wat uit een 3mf kwam) blijft. Komt het volledige rapport pas later binnen, dan worden de lege velden alsnog ingevuld.
-- Tijdreeks: per print hoogstens één meetpunt per minuut (temperaturen, fase, %, laag) in `print_samples`, plus een punt bij elke faseovergang en bij het einde. Op de detailpagina als grafiek met fasebalk, crosshair en tabel.
-- Filter op nozzlediameter in het overzicht.
-- Volledig MQTT-rapport bekijken: `data/mqtt-rapport-p2s.json` (access code eruit gefilterd; niet in git).
+- The status card shows what the printer screen shows: the stage as readable text (`stg_cur`), plate x of y, %, layer, time left and finish time, nozzle/bed/chamber temperature (current/target; the P2S has no chamber target), speed profile, fans (part, aux, chamber, heatbreak) and the active AMS slot with its colour. On the left is the camera image (when the print has no own cover), otherwise the cover or the printer photo.
+- Fields that are missing (other model, older firmware) simply drop out. The translation of the raw fields is in `bambu_status.py`.
+- At the start of a print the listener fills in the print record: nozzle diameter, nozzle type (e.g. *Hardened steel (HS01)*), plate (`device.plate.cur_id`, e.g. `P0101`; the source has no readable name for it), plate number and number of plates, speed profile, and whether spaghetti detection and first layer inspection were on. Only fields that are still empty; what you filled in yourself (or what came from a 3mf) stays. If the full report only arrives later, the empty fields are filled in then.
+- Time series: per print at most one data point per minute (temperatures, stage, %, layer) in `print_samples`, plus one at every stage change and at the end. Shown on the detail page as a chart with a stage band, crosshair and table.
+- Filter on nozzle diameter in the overview.
+- Full MQTT report: `data/mqtt-report-p2s.json` (access code filtered out; not in git).
 
-## Foutcodes
+## Error codes
 
-De teksten (Nederlands, Engels als terugval, P2S-varianten waar die bestaan), wiki-links en faseteksten (`CURRENT_STAGE_IDS` uit `pybambu/const.py` met de vertalingen, gelezen met `ast.literal_eval`, niet uitgevoerd) staan in `bambu_errors_data.json`. Eigen Nederlandse faseteksten in `bambu_status.STAGE_TEXT` gaan voor. Bron: de foutcodelijsten van [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`scripts/hms_error_text/`, MIT), die zelf van Bambu Lab komen (`e.bambulab.com`, zoals Bambu Studio) en van de [HMS-wiki](https://wiki.bambulab.com/en/hms/home). De gebruikte commit staat in `_source` in het bestand.
+The texts (English, P2S variants where they exist), wiki links and stage texts (`CURRENT_STAGE_IDS` from `pybambu/const.py` with its translations, read with `ast.literal_eval`, never executed) are in `bambu_errors_data.json`. Own stage texts in `bambu_status.STAGE_TEXT` take precedence. Source: the error code lists of [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`scripts/hms_error_text/`, MIT), which come from Bambu Lab itself (`e.bambulab.com`, like Bambu Studio) and from the [HMS wiki](https://wiki.bambulab.com/en/hms/home). The commit used is recorded in `_source` in the file.
 
 ```bash
-python3 scripts/update_bambu_errors.py             # tabel opnieuw genereren (laatste main)
-python3 scripts/update_bambu_errors.py --ref <sha> # of een vaste versie
+python3 scripts/update_bambu_errors.py             # regenerate the table (latest main)
+python3 scripts/update_bambu_errors.py --ref <sha> # or a fixed version
 ```
 
-Daarna opnieuw bouwen (`docker compose up -d --build`). Eigen teksten en de voorgestelde faalreden per code staan in `bambu_errors.py` (`PRINT_ERRORS_EXTRA`, `HMS_CODES_EXTRA`, `FAIL_REASONS_BY_CODE`) en worden door het script niet overschreven. Alleen HMS-codes hebben een eigen wikipagina; voor print_error-codes en HMS-codes zonder bekende pagina linkt Printvault naar de HMS-startpagina.
+Then rebuild (`docker compose up -d --build`). Own texts and the suggested fail reason per code are in `bambu_errors.py` (`PRINT_ERRORS_EXTRA`, `HMS_CODES_EXTRA`, `FAIL_REASONS_BY_CODE`) and are not overwritten by the script. Only HMS codes have their own wiki page; for print_error codes and HMS codes without a known page, Printvault links to the HMS home page.
 
-## Onderhoud en meldingen
+## Maintenance and notifications
 
-- **Printers → Onderhoud**: taken met een interval in printuren en/of dagen; de taak vervalt bij wat het eerst bereikt wordt. Printuren = printtijd van de prints die na *laatst uitgevoerd* klaar waren (geplande en lopende prints tellen niet). Bij de eerste start met deze versie krijgen bestaande printers een set standaardtaken voor de P2S.
-- **Instellingen**: ntfy-server, topic, optioneel access token, en per soort melding aan/uit. Met *Testmelding sturen* controleer je de instellingen.
-- De meldingen verstuurt de listener (`printvault-mqtt`). Onderhoud wordt elke minuut nagekeken; een vervallen taak geeft één melding, en opnieuw pas nadat ze uitgevoerd is en weer vervalt.
-- Geen melding voor een einde dat de listener pas na een herstart opmerkt.
+- **Printers → Maintenance**: tasks with an interval in print hours and/or days; a task becomes due at whichever is reached first. Print hours = the print time of the prints that finished after *last done* (planned and running prints do not count). On the first start with this version, existing printers get a set of default tasks for the P2S.
+- **Settings**: ntfy server, topic, optional access token, and on/off per kind of notification. *Send test notification* checks the settings.
+- The listener (`printvault-mqtt`) sends the notifications. Maintenance is checked every minute; a task that becomes due sends one notification, and again only after it has been done and becomes due again.
+- No notification for an end the listener only notices after a restart.
 
-## Starten
+## Running
 
 ```bash
-cp .env.example .env              # vul SECRET_KEY in
+cp .env.example .env              # fill in SECRET_KEY
 mkdir -p data
 docker compose up -d --build
 ```
 
-Daarna draait de app op http://<vm-ip>:8100. Hij is ook bereikbaar via Tailscale.
+The app then runs at http://<vm-ip>:8100. It is also reachable via Tailscale.
 
 ## Data
 
-Alles staat in `./data`: de SQLite-database `printvault.db` en de uploads in `uploads/`. Maak een back-up van die map en je hebt alles.
+Everything is in `./data`: the SQLite database `printvault.db` and the uploads in `uploads/`. Back up that folder and you have everything.
 
-## Lokaal ontwikkelen
+## Local development
 
 ```bash
 python3 -m venv venv && . venv/bin/activate
 pip install -r requirements.txt
 python app.py                     # http://127.0.0.1:8100
-python mqtt_listener.py           # tweede terminal; live status op http://127.0.0.1:8101/live
+python mqtt_listener.py           # second terminal; live status at http://127.0.0.1:8101/live
 python -m unittest discover -s tests
 ```

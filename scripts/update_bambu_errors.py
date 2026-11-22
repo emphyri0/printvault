@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""Genereert bambu_errors_data.json uit de foutcodelijsten van ha-bambulab.
+"""Generates bambu_errors_data.json from the error code lists of ha-bambulab.
 
-Bron: https://github.com/greghesp/ha-bambulab (MIT-licentie), map scripts/hms_error_text/.
-ha-bambulab haalt die teksten op bij Bambu Lab zelf (https://e.bambulab.com/query.php, dezelfde
-bron als Bambu Studio) en de wiki-links van https://wiki.bambulab.com/en/hms/home.
+Source: https://github.com/greghesp/ha-bambulab (MIT licence), folder scripts/hms_error_text/.
+ha-bambulab gets those texts from Bambu Lab itself (https://e.bambulab.com/query.php, the same
+source as Bambu Studio) and the wiki links from https://wiki.bambulab.com/en/hms/home.
 
-Per code wordt de tekst voor het gekozen printermodel genomen (standaard P2S) als er een
-modelspecifieke variant is, anders de algemene tekst. Taal standaard Nederlands, met Engels
-als terugval. Hetzelfde voor de wiki-link.
+Per code, the text for the chosen printer model (P2S by default) is used when there is a
+model-specific variant, else the general text. Language English by default; for another language,
+English is the fallback. The same goes for the wiki link.
 
-Daarnaast de faseteksten (print.stg_cur): de tabel CURRENT_STAGE_IDS uit pybambu/const.py en de
-namen uit translations/<taal>.json en en.json. const.py wordt met ast.literal_eval gelezen (alleen
-die ene letterlijke dict), niet uitgevoerd.
+Also the stage texts (print.stg_cur): the CURRENT_STAGE_IDS table from pybambu/const.py and the
+names from translations/<lang>.json and en.json. const.py is read with ast.literal_eval (only that
+one literal dict), never executed.
 
-De bestanden worden alleen als JSON gelezen; er wordt niets van de download uitgevoerd.
+The other files are only read as JSON; nothing from the download is executed.
 
-Gebruik (vanuit de projectmap):
-    python3 scripts/update_bambu_errors.py                 # laatste versie van main
-    python3 scripts/update_bambu_errors.py --ref <commit>  # een vaste versie
-    python3 scripts/update_bambu_errors.py --model H2D --lang en
+Usage (from the project folder):
+    python3 scripts/update_bambu_errors.py                 # latest version of main
+    python3 scripts/update_bambu_errors.py --ref <commit>  # a fixed version
+    python3 scripts/update_bambu_errors.py --model H2D --lang nl
 """
 import argparse
 import ast
@@ -43,7 +43,7 @@ def fetch_bytes(url):
     with urllib.request.urlopen(req, timeout=60) as resp:
         body = resp.read(MAX_BYTES + 1)
     if len(body) > MAX_BYTES:
-        sys.exit(f"Antwoord te groot: {url}")
+        sys.exit(f"Response too large: {url}")
     return body
 
 
@@ -52,35 +52,35 @@ def fetch(url):
 
 
 def literal_dict(source, name):
-    """De letterlijke dict `name = {...}` uit Python-broncode, zonder die code uit te voeren."""
+    """The literal dict `name = {...}` from Python source code, without executing that code."""
     for node in ast.parse(source).body:
         if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
             value = ast.literal_eval(node.value)
             if isinstance(value, dict):
                 return value
-    sys.exit(f"{name} niet gevonden in {CONST_PATH}")
+    sys.exit(f"{name} not found in {CONST_PATH}")
 
 
 def build_stages(stage_ids, texts, fallback):
-    """{"0": {"key": "printing", "en": "Printing", "nl": "…"}}; 'default' en niet-gehele codes vallen weg."""
+    """{"0": {"key": "printing", "en": "Printing", "text": "<chosen language>"}}; 'default' and non-integer codes are dropped."""
     def names(tr):
         return (((tr.get("entity") or {}).get("sensor") or {}).get("stage") or {}).get("state") or {}
-    nl, en = names(texts), names(fallback)
+    local, en = names(texts), names(fallback)
     out = {}
     for code, key in stage_ids.items():
         if isinstance(code, int) and isinstance(key, str):
-            out[str(code)] = {"key": key, "en": en.get(key), "nl": nl.get(key)}
+            out[str(code)] = {"key": key, "en": en.get(key), "text": local.get(key) or en.get(key)}
     return out
 
 
 def resolve_ref(ref):
-    """Branch of tag → vaste commit-sha, zodat de bron exact vastligt."""
+    """Branch or tag → fixed commit sha, so the source is pinned exactly."""
     commit = fetch(f"https://api.github.com/repos/{REPO}/commits/{ref}")
     return commit["sha"], commit["commit"]["committer"]["date"]
 
 
 def pick(variants, model):
-    """{tekst: [modellen]} → tekst voor `model`, anders de algemene (lege modellijst)."""
+    """{text: [models]} → text for `model`, else the general one (empty model list)."""
     if not isinstance(variants, dict) or not variants:
         return None
     for value, models in variants.items():
@@ -124,9 +124,9 @@ def build(texts, fallback, wiki, model):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--ref", default="main", help="branch, tag of commit van ha-bambulab (standaard: main)")
-    ap.add_argument("--model", default="P2S", help="printermodel voor modelspecifieke teksten (standaard: P2S)")
-    ap.add_argument("--lang", default="nl", help="taal (standaard: nl; Engels is de terugval)")
+    ap.add_argument("--ref", default="main", help="branch, tag or commit of ha-bambulab (default: main)")
+    ap.add_argument("--model", default="P2S", help="printer model for model-specific texts (default: P2S)")
+    ap.add_argument("--lang", default="en", help="language (default: en; English is the fallback)")
     args = ap.parse_args()
 
     sha, date = resolve_ref(args.ref)
@@ -148,15 +148,15 @@ def main():
         "commit_date": date,
         "files": [f"{DATA_PATH}/hms_{args.lang}.json", f"{DATA_PATH}/hms_en.json", f"{DATA_PATH}/wiki_links.json",
                   f"{CONST_PATH} (CURRENT_STAGE_IDS)", f"{TRANSLATIONS_PATH}/{args.lang}.json", f"{TRANSLATIONS_PATH}/en.json"],
-        "license": "MIT (ha-bambulab contributors); teksten van Bambu Lab (e.bambulab.com)",
+        "license": "MIT (ha-bambulab contributors); texts by Bambu Lab (e.bambulab.com)",
         "model": args.model,
         "lang": args.lang,
         "generated": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "generator": "scripts/update_bambu_errors.py",
     }
     OUT.write_text(json.dumps(data, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"{len(data['print_errors'])} print_error-codes, {len(data['hms'])} HMS-codes, "
-          f"{len(data['wiki'])} wiki-links, {len(data['stages'])} fasen → {OUT.name}")
+    print(f"{len(data['print_errors'])} print_error codes, {len(data['hms'])} HMS codes, "
+          f"{len(data['wiki'])} wiki links, {len(data['stages'])} stages → {OUT.name}")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
-"""Onderhoudstaken per printer, met een interval in printuren en/of dagen.
+"""Maintenance tasks per printer, with an interval in print hours and/or days.
 
-Printuren sinds het laatste onderhoud = som van de printtijd van de prints van die printer die
-na `last_done_at` klaar waren (finished_at, anders printed_on, anders created_at). Geplande en
-lopende prints tellen niet mee.
+Print hours since the last maintenance = the sum of the print time of that printer's prints that
+finished after `last_done_at` (finished_at, else printed_on, else created_at). Planned and running
+prints do not count.
 """
 import os
 import sqlite3
@@ -12,15 +12,24 @@ from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
 
-# Startwaarden voor een Bambu Lab P2S; pas ze aan op de onderhoudspagina van de printer.
-# (naam, interval in printuren of None, interval in dagen of None)
+# Starting values for a Bambu Lab P2S; adjust them on the printer's maintenance page.
+# (name, interval in print hours or None, interval in days or None)
 DEFAULT_TASKS = [
-    ("Plaat reinigen (water en afwasmiddel)", 25, None),
-    ("Nozzle controleren en reinigen", 100, None),
-    ("Carbon rods / rails reinigen", 100, 30),
-    ("Z-spindels en geleiders smeren", 200, 90),
-    ("Exhaust-filter (HEPA/actieve kool) vervangen", 500, 180),
+    ("Clean build plate (water and dish soap)", 25, None),
+    ("Inspect and clean nozzle", 100, None),
+    ("Clean carbon rods / rails", 100, 30),
+    ("Lubricate Z lead screws and guides", 200, 90),
+    ("Replace exhaust filter (HEPA/activated carbon)", 500, 180),
 ]
+# Default names of the Dutch version → English (used by the database migration; a task
+# the user renamed keeps its name).
+LEGACY_DEFAULT_NAMES = {
+    "Plaat reinigen (water en afwasmiddel)": DEFAULT_TASKS[0][0],
+    "Nozzle controleren en reinigen": DEFAULT_TASKS[1][0],
+    "Carbon rods / rails reinigen": DEFAULT_TASKS[2][0],
+    "Z-spindels en geleiders smeren": DEFAULT_TASKS[3][0],
+    "Exhaust-filter (HEPA/actieve kool) vervangen": DEFAULT_TASKS[4][0],
+}
 
 
 def now_local():
@@ -28,7 +37,7 @@ def now_local():
 
 
 def parse_time(text):
-    """ISO-tijd uit de database; zonder tijdzone (bv. created_at) is het UTC."""
+    """ISO time from the database; without a time zone (e.g. created_at) it is UTC."""
     dt = datetime.fromisoformat(text)
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
@@ -42,14 +51,14 @@ def seed_defaults(db, printer_id, now=None):
 def print_minutes_since(db, printer_id, since):
     row = db.execute(
         "SELECT COALESCE(SUM(print_time_min), 0) FROM prints WHERE printer_id = ? "
-        "AND status NOT IN ('gepland', 'bezig') "
+        "AND status NOT IN ('planned', 'printing') "
         "AND datetime(COALESCE(finished_at, printed_on, created_at)) > datetime(?)",
         (printer_id, since)).fetchone()
     return row[0]
 
 
 def task_status(db, task, now=None):
-    """Status van een taak: verbruikte uren/dagen, wat nog rest, voortgang (0–1) en of ze vervallen is."""
+    """Status of a task: hours/days used, what is left, progress (0–1) and whether it is due."""
     now = now or now_local()
     since = task["last_done_at"] or task["created_at"]
     hours = print_minutes_since(db, task["printer_id"], since) / 60
@@ -68,13 +77,13 @@ def task_status(db, task, now=None):
 
 
 def describe(task, st):
-    """'312 van 200 printuren · 45 van 90 dagen'."""
+    """'312 of 200 print hours · 45 of 90 days'."""
     parts = []
     if task["interval_hours"]:
-        parts.append(f"{st['hours']:.0f} van {task['interval_hours']:g} printuren")
+        parts.append(f"{st['hours']:.0f} of {task['interval_hours']:g} print hours")
     if task["interval_days"]:
-        parts.append(f"{st['days']} van {task['interval_days']} dagen")
-    return " · ".join(parts) or "geen interval"
+        parts.append(f"{st['days']} of {task['interval_days']} days")
+    return " · ".join(parts) or "no interval"
 
 
 def tasks_for_printer(db, printer_id, now=None):
@@ -86,8 +95,8 @@ def tasks_for_printer(db, printer_id, now=None):
 
 
 def check_and_notify(db_path, notifier, now=None):
-    """Stuurt één melding per keer dat een taak vervalt. Een taak die niet (meer) vervallen is,
-    wordt opnieuw 'gewapend' zodat ze na de volgende keer weer een melding geeft."""
+    """Sends one notification each time a task becomes due. A task that is not (or no longer) due
+    is re-armed so that it notifies again the next time it becomes due."""
     if notifier is None:
         return 0
     now = now or now_local()
@@ -99,7 +108,7 @@ def check_and_notify(db_path, notifier, now=None):
         for t in rows:
             st = task_status(db, t, now)
             if st["due"] and not t["notified_at"]:
-                if notifier("maintenance", f"Onderhoud: {t['name']}",
+                if notifier("maintenance", f"Maintenance: {t['name']}",
                             f"{t['printer_name']}: {describe(t, st)}", tags=["wrench"]):
                     db.execute("UPDATE maintenance_tasks SET notified_at = ? WHERE id = ?", (now.isoformat(), t["id"]))
                     sent += 1

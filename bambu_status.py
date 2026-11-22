@@ -1,85 +1,57 @@
-"""Leesbare waarden uit het MQTT-statusrapport van Bambu Lab-printers (print.*).
+"""Readable values from the MQTT status report of Bambu Lab printers (print.*).
 
-Getest met een P2S (firmware 2026). Elk veld is optioneel: ontbreekt het (ander model of
-oudere firmware), dan geven de functies None en valt dat stuk in de weergave weg.
+Tested with a P2S (2026 firmware). Every field is optional: when it is missing (other model or
+older firmware) the functions return None and that part simply drops out of the display.
 
-BRONNEN
-  - Fasecodes (stg_cur): CURRENT_STAGE_IDS uit ha-bambulab (pybambu/const.py, MIT), met hun
-    vertalingen; gegenereerd in bambu_errors_data.json ("stages") door scripts/update_bambu_errors.py.
-    STAGE_TEXT hieronder gaat voor: eigen Nederlandse teksten voor de gangbare fasen.
-  - Snelheidsprofielen (spd_lvl), ventilatorschaal 0–15 en nozzletypecodes (bv. HS01): zoals
-    ha-bambulab ze leest (const.SPEED_PROFILE, utils.fan_percentage, models.Info._nozzle_type_name).
-  - Temperaturen in device.* zijn verpakt als (doel << 16) | huidig: 0xDC00DC = doel 220, huidig 220.
+SOURCES
+  - Stage codes (stg_cur): CURRENT_STAGE_IDS from ha-bambulab (pybambu/const.py, MIT) with their
+    translations; generated into bambu_errors_data.json ("stages") by scripts/update_bambu_errors.py.
+    STAGE_TEXT below takes precedence: own wording where the source text is awkward.
+  - Speed profiles (spd_lvl), the 0–15 fan scale and nozzle type codes (e.g. HS01): read the way
+    ha-bambulab reads them (const.SPEED_PROFILE, utils.fan_percentage, models.Info._nozzle_type_name).
+  - Temperatures under device.* are packed as (target << 16) | current: 0xDC00DC = target 220, current 220.
 """
 import bambu_errors
 
-# Eigen Nederlandse teksten; gaan voor op de gegenereerde. Rest: bron-nl, dan bron-en, dan "Fase <code>".
+# Own texts; take precedence over the generated ones. Otherwise: source (en), then "Stage <code>".
 STAGE_TEXT = {
-    0: "Printen",
-    1: "Bed nivelleren",
-    2: "Bed opwarmen",
-    3: "Trillingscompensatie",
-    4: "Filament wisselen",
-    5: "Pauze (M400)",
-    6: "Gepauzeerd: filament op",
-    7: "Nozzle opwarmen",
-    8: "Extrusie kalibreren",
-    9: "Bedoppervlak scannen",
-    10: "Eerste laag inspecteren",
-    11: "Plaattype herkennen",
-    12: "Micro-lidar kalibreren",
-    13: "Printkop naar thuispositie",
-    14: "Nozzle reinigen",
-    15: "Nozzletemperatuur controleren",
-    16: "Gepauzeerd door gebruiker",
-    17: "Gepauzeerd: voorklep",
-    18: "Micro-lidar kalibreren",
-    19: "Flow kalibreren",
-    20: "Gepauzeerd: storing nozzletemperatuur",
-    21: "Gepauzeerd: storing bedtemperatuur",
-    22: "Filament uitladen",
-    23: "Gepauzeerd: stappen overgeslagen",
-    24: "Filament laden",
-    25: "Motorgeluid kalibreren",
-    26: "Gepauzeerd: AMS niet bereikbaar",
-    27: "Gepauzeerd: heatbreak-ventilator te traag",
-    28: "Gepauzeerd: fout kamertemperatuur",
-    29: "Kamer koelen",
-    30: "Gepauzeerd door G-code",
-    32: "Gepauzeerd: filament rond de nozzle",
-    33: "Gepauzeerd: fout filamentsnijder",
-    34: "Gepauzeerd: fout eerste laag",
-    35: "Gepauzeerd: nozzle verstopt",
-    39: "Nozzle-offset kalibreren",
-    40: "Bed nivelleren op hoge temperatuur",
-    47: "Bed nivelleren (fase 1)",
-    48: "Bed nivelleren (fase 2)",
-    49: "Kamer opwarmen",
-    50: "Bed afkoelen",
-    51: "Kalibratielijnen printen",
-    52: "Materiaal controleren",
-    53: "Camera kalibreren",
-    54: "Wachten op bedtemperatuur",
-    58: "Thermisch voorbereiden",
-    63: "Wachten tot kamertemperatuur stabiel is",
-    69: "Nozzle afkoelen",
-    76: "Voorextrusie",
-    77: "AMS voorbereiden",
-    82: "Bed stabiliseren",
+    0: "Printing",
+    1: "Bed leveling",
+    2: "Heating bed",
+    3: "Vibration compensation",
+    5: "Paused (M400)",
+    7: "Heating nozzle",
+    11: "Identifying plate type",
+    13: "Homing toolhead",
+    14: "Cleaning nozzle",
+    20: "Paused: nozzle temperature error",
+    21: "Paused: bed temperature error",
+    27: "Paused: heatbreak fan too slow",
+    28: "Paused: chamber temperature error",
+    31: "Motor noise demo",
+    40: "Bed leveling at high temperature",
+    47: "Bed leveling (phase 1)",
+    48: "Bed leveling (phase 2)",
+    50: "Cooling bed",
+    63: "Waiting for chamber temperature",
+    65: "Calibrating nozzle clump detection",
+    82: "Stabilizing bed",
 }
 IDLE_STAGES = {-1, 255}
 PAUSE_STAGES = {5, 6, 16, 17, 20, 21, 23, 26, 27, 28, 30, 32, 33, 34, 35}
 HEAT_STAGES = {2, 7, 29, 40, 49, 50, 54, 58, 63, 69, 82}
-# Fasegroepen voor de kleuren in de grafiek
-STAGE_GROUPS = {"printen": {0}, "opwarmen": HEAT_STAGES, "pauze": PAUSE_STAGES,
-                "filament": {4, 22, 24, 77}, "nivelleren": {1, 9, 40, 47, 48}}
+# Stage groups (internal value → stages)
+STAGE_GROUPS = {"printing": {0}, "heating": HEAT_STAGES, "paused": PAUSE_STAGES,
+                "filament": {4, 22, 24, 77}, "leveling": {1, 9, 40, 47, 48}}
 
-SPEED_PROFILES = {1: "Stil", 2: "Standaard", 3: "Sport", 4: "Ludicrous"}
+# Internal value → label; SPEED_LEVELS maps the printer's spd_lvl to the internal value.
+SPEED_PROFILES = {"silent": "Silent", "standard": "Standard", "sport": "Sport", "ludicrous": "Ludicrous"}
+SPEED_LEVELS = {1: "silent", 2: "standard", 3: "sport", 4: "ludicrous"}
 
-NOZZLE_MATERIALS = {"00": "roestvrij staal", "01": "gehard staal", "05": "wolfraamcarbide"}
+NOZZLE_MATERIALS = {"00": "stainless steel", "01": "hardened steel", "05": "tungsten carbide"}
 
-GCODE_STATES = {"PREPARE": "Voorbereiden", "RUNNING": "Printen", "PAUSE": "Gepauzeerd", "FINISH": "Klaar",
-                "FAILED": "Mislukt", "IDLE": "Inactief", "SLICING": "Slicen", "INIT": "Opstarten"}
+GCODE_STATES = {"PREPARE": "Preparing", "RUNNING": "Printing", "PAUSE": "Paused", "FINISH": "Finished",
+                "FAILED": "Failed", "IDLE": "Idle", "SLICING": "Slicing", "INIT": "Starting up"}
 
 
 def _stage_table():
@@ -126,7 +98,7 @@ def stage_text(code):
     if code in STAGE_TEXT:
         return STAGE_TEXT[code]
     s = STAGES.get(code) or {}
-    return s.get("nl") or s.get("en") or f"Fase {code}"
+    return s.get("text") or s.get("en") or f"Stage {code}"
 
 
 def stage_group(code):
@@ -134,22 +106,22 @@ def stage_group(code):
     for group, codes in STAGE_GROUPS.items():
         if code in codes:
             return group
-    return "voorbereiden"
+    return "preparing"
 
 
 def phase(state):
-    """(code, tekst) van wat de printer nu doet. Tijdens een print uit stg_cur, anders de gcode_state."""
+    """(code, text) of what the printer is doing now. During a print from stg_cur, else from gcode_state."""
     gs = state.get("gcode_state")
     code = as_int(state.get("stg_cur"))
     if gs in ("PREPARE", "RUNNING", "PAUSE") and code is not None and code not in IDLE_STAGES:
         if gs == "PAUSE" and code == 0:
-            return code, "Gepauzeerd"
+            return code, "Paused"
         return code, stage_text(code)
     return None, GCODE_STATES.get(gs, gs)
 
 
 def unpack_temp(v):
-    """(huidig, doel) uit een verpakte temperatuur (doel << 16 | huidig)."""
+    """(current, target) from a packed temperature (target << 16 | current)."""
     v = as_int(v)
     if v is None or v < 0:
         return None, None
@@ -157,7 +129,7 @@ def unpack_temp(v):
 
 
 def temperatures(state):
-    """{'nozzle': (huidig, doel), 'bed': (…), 'chamber': (huidig, doel of None)}; None waar onbekend."""
+    """{'nozzle': (current, target), 'bed': (…), 'chamber': (current, target or None)}; None where unknown."""
     ext = _get(state, "device", "extruder", "info", 0, "temp")
     n_cur, n_tar = as_float(state.get("nozzle_temper")), as_float(state.get("nozzle_target_temper"))
     if n_cur is None:
@@ -165,19 +137,19 @@ def temperatures(state):
     b_cur, b_tar = as_float(state.get("bed_temper")), as_float(state.get("bed_target_temper"))
     if b_cur is None:
         b_cur, b_tar = unpack_temp(_get(state, "device", "bed", "info", "temp"))
-    c_cur = as_float(state.get("chamber_temper"))   # oudere modellen (X1)
+    c_cur = as_float(state.get("chamber_temper"))   # older models (X1)
     c_tar = None
     if c_cur is None:
         packed = _get(state, "device", "ctc", "info", "temp")
         if packed is None:
             packed = _get(state, "info", "temp")
         c_cur, c_tar = unpack_temp(packed)
-        c_tar = c_tar or None   # 0 = geen doeltemperatuur (de P2S verwarmt de kamer niet)
+        c_tar = c_tar or None   # 0 = no target temperature (the P2S does not heat its chamber)
     return {"nozzle": (n_cur, n_tar), "bed": (b_cur, b_tar), "chamber": (c_cur, c_tar)}
 
 
 def fan_percent(v):
-    """Ventilatorstand 0–15 → procent in stappen van 10."""
+    """Fan level 0–15 → percent in steps of 10."""
     v = as_int(v)
     if v is None:
         return None
@@ -185,9 +157,9 @@ def fan_percent(v):
 
 
 def fans(state):
-    out = {"onderdeel": fan_percent(state.get("cooling_fan_speed")),
+    out = {"part": fan_percent(state.get("cooling_fan_speed")),
            "aux": fan_percent(state.get("big_fan1_speed")),
-           "kamer": fan_percent(state.get("big_fan2_speed")),
+           "chamber": fan_percent(state.get("big_fan2_speed")),
            "heatbreak": fan_percent(state.get("heatbreak_fan_speed"))}
     return {k: v for k, v in out.items() if v is not None}
 
@@ -196,11 +168,13 @@ def speed(state):
     lvl = as_int(state.get("spd_lvl"))
     if lvl is None:
         return None
-    return {"level": lvl, "name": SPEED_PROFILES.get(lvl, f"Profiel {lvl}"), "percent": as_int(state.get("spd_mag"))}
+    value = SPEED_LEVELS.get(lvl)
+    return {"level": lvl, "value": value, "name": SPEED_PROFILES.get(value, f"Profile {lvl}"),
+            "percent": as_int(state.get("spd_mag"))}
 
 
 def nozzle_type_name(code):
-    """'HS01' → 'gehard staal'; 'HH01' → 'gehard staal, high-flow'; onbekend → None."""
+    """'HS01' → 'hardened steel'; 'HH01' → 'hardened steel, high-flow'; unknown → None."""
     code = str(code or "").strip().upper()
     if len(code) < 4:
         return None
@@ -213,15 +187,15 @@ def nozzle_type_name(code):
 
 
 def active_tray(state):
-    """Het AMS-slot (of de externe spoel) dat nu filament levert, of None."""
+    """The AMS slot (or the external spool) that is feeding filament now, or None."""
     now = as_int(_get(state, "ams", "tray_now"))
     if now is None or now == 255:
         return None
     if now == 254:
         slot = _get(state, "vir_slot", 0) or {}
-        unit, tray, label = None, None, "Externe spoel"
+        unit, tray, label = None, None, "External spool"
     else:
-        unit, tray = (now >> 2, now & 3) if now < 128 else (now, 0)   # AMS HT: eigen id, één slot
+        unit, tray = (now >> 2, now & 3) if now < 128 else (now, 0)   # AMS HT: own id, one slot
         slot = {}
         for u in _get(state, "ams", "ams") or []:
             if as_int(u.get("id")) == unit:
@@ -234,7 +208,7 @@ def active_tray(state):
 
 
 def print_settings(state):
-    """Wat bij de start van een print in het printrecord mag (enkel de velden die bekend zijn)."""
+    """What may go into the print record at the start of a print (only the fields that are known)."""
     out = {}
     diameter = as_float(state.get("nozzle_diameter") or _get(state, "device", "nozzle", "info", 0, "diameter"))
     if diameter:
@@ -245,14 +219,14 @@ def print_settings(state):
         out["nozzle_type"] = f"{name[0].upper()}{name[1:]} ({code})" if name else str(code)
     plate = _get(state, "device", "plate", "cur_id")
     if plate:
-        out["plate_type"] = str(plate)   # de bron heeft geen leesbare naam voor deze codes
+        out["plate_type"] = str(plate)   # the source has no readable name for these codes
     if as_int(state.get("plate_idx")):
         out["plate"] = as_int(state.get("plate_idx"))
     if as_int(state.get("plate_cnt")):
         out["plate_count"] = as_int(state.get("plate_cnt"))
     sp = speed(state)
-    if sp:
-        out["speed_profile"] = sp["name"]
+    if sp and sp["value"]:
+        out["speed_profile"] = sp["value"]
     xcam = state.get("xcam")
     if isinstance(xcam, dict):
         if isinstance(xcam.get("spaghetti_detector"), bool):
@@ -263,7 +237,7 @@ def print_settings(state):
 
 
 def sample(state):
-    """Eén meetpunt voor de tijdreeks van een print."""
+    """One data point for a print's time series."""
     t = temperatures(state)
     code, _ = phase(state)
     return {"nozzle": t["nozzle"][0], "nozzle_target": t["nozzle"][1], "bed": t["bed"][0],

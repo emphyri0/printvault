@@ -28,11 +28,19 @@ DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 
 PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
 MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
-# "onbekend": de listener zag het einde van de print niet. "opnieuw": bewust opnieuw te printen.
-STATUSES = ["gepland", "bezig", "gelukt", "mislukt", "onbekend", "opnieuw"]
-MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
-FAIL_REASONS = ["hechting", "warping", "spaghetti", "verstopping", "stroomuitval", "anders"]
-SPEED_PROFILES = list(bambu_status.SPEED_PROFILES.values())
+# Internal values are lowercase snake_case; what the UI shows comes from LABELS.
+# "unknown": the listener did not see the print end. "reprint": deliberately to be printed again.
+STATUSES = ["planned", "printing", "succeeded", "failed", "unknown", "reprint"]
+FAIL_REASONS = ["adhesion", "warping", "spaghetti", "clog", "power_loss", "other"]
+SPEED_PROFILES = list(bambu_status.SPEED_PROFILES)
+MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Other"]
+LABELS = {
+    "planned": "Planned", "printing": "Printing", "succeeded": "Succeeded", "failed": "Failed",
+    "unknown": "Unknown", "reprint": "Reprint",
+    "adhesion": "Adhesion", "warping": "Warping", "spaghetti": "Spaghetti", "clog": "Clog",
+    "power_loss": "Power loss", "other": "Other",
+    **bambu_status.SPEED_PROFILES,
+}
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
@@ -49,7 +57,7 @@ CREATE TABLE IF NOT EXISTS prints (
     print_time_min INTEGER,
     layer_height REAL,
     nozzle REAL,
-    status TEXT DEFAULT 'gepland',
+    status TEXT DEFAULT 'planned',
     tags TEXT DEFAULT '',
     notes TEXT DEFAULT '',
     printed_on TEXT,
@@ -163,18 +171,56 @@ def init_db():
                     try:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
                     except sqlite3.OperationalError as e:
-                        # webapp en listener starten tegelijk; de ander kan net voor geweest zijn
+                        # web app and listener start at the same time; the other one may have just done it
                         if "duplicate column" not in str(e):
                             raise
         db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
-        # Prints die de listener vroeger op 'opnieuw' zette omdat hij het einde miste, krijgen 'onbekend'.
-        db.execute("UPDATE prints SET status = 'onbekend' WHERE status = 'opnieuw' AND source = 'mqtt' "
-                   "AND notes LIKE '%Einde niet waargenomen%'")
-        # Eenmalig: standaard-onderhoudstaken voor de printers die er al zijn (zonder taken).
+        migrate_legacy(db)
+        # Once: default maintenance tasks for printers that already exist (and have no tasks).
         if db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_seeded', '1')").rowcount:
             for (pid,) in db.execute("SELECT id FROM printers").fetchall():
                 if not db.execute("SELECT 1 FROM maintenance_tasks WHERE printer_id = ?", (pid,)).fetchone():
                     maintenance.seed_defaults(db, pid)
+
+
+# ---------- Migration from the Dutch version (idempotent: only touches old Dutch values) ----------
+
+LEGACY_STATUSES = {"gepland": "planned", "bezig": "printing", "gelukt": "succeeded", "mislukt": "failed",
+                   "onbekend": "unknown", "opnieuw": "reprint"}
+LEGACY_FAIL_REASONS = {"hechting": "adhesion", "warping": "warping", "spaghetti": "spaghetti",
+                       "verstopping": "clog", "stroomuitval": "power_loss", "anders": "other"}
+LEGACY_SPEED_PROFILES = {"Stil": "silent", "Standaard": "standard", "Sport": "sport", "Ludicrous": "ludicrous"}
+LEGACY_NOZZLE_TYPES = [("Roestvrij staal", "Stainless steel"), ("Gehard staal", "Hardened steel"),
+                       ("Wolfraamcarbide", "Tungsten carbide")]
+# Sentences the listener used to write into the notes.
+LEGACY_NOTES = {
+    "Start niet live gezien: listener startte tijdens de print, starttijd en duur zijn bij benadering.":
+        "Start not seen live: the listener started during the print, start time and duration are approximate.",
+    "Einde niet live gezien: eindtijd is het moment waarop de listener startte.":
+        "End not seen live: the end time is when the listener started.",
+    "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf.":
+        "End not observed (listener was not connected). Check the status yourself.",
+}
+
+
+def migrate_legacy(db):
+    # Older: prints the listener set to 'opnieuw' because it missed the end become 'unknown'.
+    db.execute("UPDATE prints SET status = 'onbekend' WHERE status = 'opnieuw' AND source = 'mqtt' "
+               "AND notes LIKE '%Einde niet waargenomen%'")
+    for old, new in LEGACY_STATUSES.items():
+        db.execute("UPDATE prints SET status = ? WHERE status = ?", (new, old))
+    for old, new in LEGACY_FAIL_REASONS.items():
+        db.execute("UPDATE prints SET fail_reason = ? WHERE fail_reason = ?", (new, old))
+    for old, new in LEGACY_SPEED_PROFILES.items():
+        db.execute("UPDATE prints SET speed_profile = ? WHERE speed_profile = ?", (new, old))
+    db.execute("UPDATE prints SET material = 'Other' WHERE material = 'Ander'")
+    for old, new in LEGACY_NOZZLE_TYPES:   # e.g. 'Gehard staal, high-flow (HH01)' → 'Hardened steel, high-flow (HH01)'
+        db.execute("UPDATE prints SET nozzle_type = ? || substr(nozzle_type, ?) WHERE nozzle_type LIKE ?",
+                   (new, len(old) + 1, old + "%"))
+    for old, new in LEGACY_NOTES.items():
+        db.execute("UPDATE prints SET notes = replace(notes, ?, ?) WHERE instr(notes, ?) > 0", (old, new, old))
+    for old, new in maintenance.LEGACY_DEFAULT_NAMES.items():   # only names that are still the Dutch default
+        db.execute("UPDATE maintenance_tasks SET name = ? WHERE name = ?", (new, old))
 
 
 def ext_of(filename):
@@ -192,13 +238,13 @@ def num(value, cast=float):
 
 
 def onoff(value):
-    """'1' → 1, '0' → 0, leeg → None (niet ingevuld)."""
+    """'1' → 1, '0' → 0, empty → None (not filled in)."""
     return {"1": 1, "0": 0}.get(value)
 
 
 def form_to_print(form):
-    status = form.get("status", "gepland")
-    failed = status == "mislukt"
+    status = form.get("status", "planned")
+    failed = status == "failed"
     reason = form.get("fail_reason", "")
     hours = num(form.get("hours"), int) or 0
     minutes = num(form.get("minutes"), int) or 0
@@ -212,7 +258,7 @@ def form_to_print(form):
         "print_time_min": total or None,
         "layer_height": num(form.get("layer_height")),
         "nozzle": num(form.get("nozzle")),
-        "status": status if status in STATUSES else "gepland",
+        "status": status if status in STATUSES else "planned",
         "tags": ", ".join(t.strip() for t in form.get("tags", "").split(",") if t.strip()),
         "notes": form.get("notes", "").strip(),
         "printed_on": form.get("printed_on") or None,
@@ -227,7 +273,7 @@ def form_to_print(form):
         "plate": num(form.get("plate"), int),
         "plate_count": num(form.get("plate_count"), int),
         "nozzle_type": form.get("nozzle_type", "").strip() or None,
-        "speed_profile": form.get("speed_profile", "").strip() or None,
+        "speed_profile": form.get("speed_profile") if form.get("speed_profile") in SPEED_PROFILES else None,
         "spaghetti_detection": onoff(form.get("spaghetti_detection")),
         "first_layer_inspection": onoff(form.get("first_layer_inspection")),
         "fail_reason": reason if failed and reason in FAIL_REASONS else None,
@@ -235,10 +281,10 @@ def form_to_print(form):
     }
 
 
-SLICER_FIELDS = {"material": "materiaal", "color": "kleur", "filament_g": "gewicht",
-                 "print_time_min": "printtijd", "layer_height": "laagdikte", "nozzle": "nozzle",
-                 "infill": "infill", "plate_type": "plaattype", "nozzle_temp": "nozzletemp",
-                 "bed_temp": "bedtemp", "plate": "plaatnummer"}
+SLICER_FIELDS = {"material": "material", "color": "colour", "filament_g": "weight",
+                 "print_time_min": "print time", "layer_height": "layer height", "nozzle": "nozzle",
+                 "infill": "infill", "plate_type": "plate type", "nozzle_temp": "nozzle temperature",
+                 "bed_temp": "bed temperature", "plate": "plate number"}
 
 
 def store_bytes(print_id, kind, content, ext, original_name):
@@ -253,7 +299,7 @@ def store_bytes(print_id, kind, content, ext, original_name):
 
 
 def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite_name=False):
-    """Leest een 3mf/gcode uit en werkt de print bij. Geeft een korte samenvatting terug."""
+    """Reads a 3mf/gcode file and updates the print. Returns a short summary."""
     parsed = slicer.parse(path, original_name)
     plates = parsed["plates"]
     if plate_index is None:
@@ -262,7 +308,7 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
     db = get_db()
     if overwrite_name:
         stem = re.sub(r"(\.gcode)?\.(3mf|gcode)$", "", original_name, flags=re.I)
-        fields["name"] = (parsed.get("name") or stem.replace("_", " ")).strip()[:200] or "Naamloze print"
+        fields["name"] = (parsed.get("name") or stem.replace("_", " ")).strip()[:200] or "Untitled print"
     if filaments:
         p = db.execute("SELECT notes FROM prints WHERE id = ?", (print_id,)).fetchone()
         line = "Filament (slicer): " + slicer.filament_summary(filaments)
@@ -273,14 +319,14 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
                    [*fields.values(), print_id])
     if thumb:
         content, ext = thumb
-        thumb_name = f"thumbnail-plaat-{plate_index}.{ext}"
+        thumb_name = f"thumbnail-plate-{plate_index}.{ext}"
         exists = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name = ?",
                             (print_id, thumb_name)).fetchone()
         if not exists:
             store_bytes(print_id, "photo", content, ext, thumb_name)
     db.commit()
     found = [label for k, label in SLICER_FIELDS.items() if fields.get(k) not in (None, "")]
-    plate_info = (f" Dit bestand heeft {len(plates)} platen; plaat {plate_index} is gebruikt."
+    plate_info = (f" This file has {len(plates)} plates; plate {plate_index} was used."
                   if len(plates) > 1 else "")
     return found, plate_info
 
@@ -308,18 +354,20 @@ def save_uploads(print_id, uploads):
         )
     db.commit()
     if skipped:
-        flash("Overgeslagen (onbekend bestandstype): " + ", ".join(skipped), "warn")
+        flash("Skipped (unknown file type): " + ", ".join(skipped), "warn")
 
 
-# Automatische thumbnails (uit de slicer of van MakerWorld); al de rest zijn echte foto's.
-THUMB_SQL = "(f.original_name LIKE 'thumbnail-plaat-%' OR f.original_name LIKE 'makerworld-cover.%')"
-# Omslagfoto: gekozen foto, anders de eerste echte foto, anders een slicer-/MakerWorld-thumbnail.
+# Automatic thumbnails (from the slicer or MakerWorld); everything else is a real photo.
+# 'thumbnail-plaat-' is the name older versions used.
+THUMB_SQL = ("(f.original_name LIKE 'thumbnail-plate-%' OR f.original_name LIKE 'thumbnail-plaat-%' "
+             "OR f.original_name LIKE 'makerworld-cover.%')")
+# Cover photo: the chosen photo, else the first real photo, else a slicer/MakerWorld thumbnail.
 COVER_SQL = f"""COALESCE(
     (SELECT f.stored_name FROM files f WHERE f.id = p.cover_file_id AND f.print_id = p.id AND f.kind = 'photo'),
     (SELECT f.stored_name FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
        ORDER BY {THUMB_SQL}, f.id
        LIMIT 1))"""
-# Eigen omslag: een gekozen foto of een echte foto. Een thumbnail mag door het camerabeeld vervangen worden.
+# Own cover: a chosen photo or a real photo. A thumbnail may be replaced by the camera image.
 OWN_COVER_SQL = f"""EXISTS (SELECT 1 FROM files f WHERE f.print_id = p.id AND f.kind = 'photo'
     AND (f.id = p.cover_file_id OR NOT {THUMB_SQL}))"""
 
@@ -331,12 +379,28 @@ def get_print(print_id):
     return row
 
 
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def format_day(d):
+    """date/datetime → '22 Nov 2026' (fixed English month names, independent of the system locale)."""
+    return f"{d.day} {MONTHS[d.month - 1]} {d.year}"
+
+
+@app.template_filter("label")
+def label(value):
+    """Internal value → display text, e.g. 'power_loss' → 'Power loss'."""
+    if value in LABELS:
+        return LABELS[value]
+    return str(value).replace("_", " ").capitalize() if value else "–"
+
+
 @app.template_filter("duration")
 def duration(minutes):
     if not minutes:
         return "–"
     h, m = divmod(int(minutes), 60)
-    return f"{h}u {m:02d}m" if h else f"{m}m"
+    return f"{h}h {m:02d}m" if h else f"{m}m"
 
 
 @app.template_filter("errcode")
@@ -352,9 +416,19 @@ def errinfo(err):
 
 @app.template_filter("clock")
 def clock(iso):
-    """'2026-11-18T19:02:00+01:00' → '18-11-2026 19:02'."""
+    """'2026-11-18T19:02:00+01:00' → '18 Nov 2026, 19:02' (24-hour clock)."""
     try:
-        return datetime.fromisoformat(iso).strftime("%d-%m-%Y %H:%M")
+        dt = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return iso or "–"
+    return f"{format_day(dt)}, {dt:%H:%M}"
+
+
+@app.template_filter("day")
+def day(iso):
+    """'2026-11-18' → '18 Nov 2026'."""
+    try:
+        return format_day(date.fromisoformat(str(iso)[:10]))
     except (TypeError, ValueError):
         return iso or "–"
 
@@ -373,7 +447,7 @@ def filesize(size):
 def inject_lists():
     printers = get_db().execute("SELECT id, name FROM printers ORDER BY name").fetchall()
     return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
-            "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES}
+            "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES, "labels": LABELS}
 
 
 @app.route("/")
@@ -401,7 +475,7 @@ def index():
         sql += " AND p.status = ?"
         args.append(status)
     if fail in FAIL_REASONS:
-        sql += " AND p.status = 'mislukt' AND p.fail_reason = ?"
+        sql += " AND p.status = 'failed' AND p.fail_reason = ?"
         args.append(fail)
     if nozzle:
         sql += " AND ABS(p.nozzle - ?) < 0.001"
@@ -413,8 +487,8 @@ def index():
         """SELECT COUNT(*) AS n,
                   COALESCE(SUM(filament_g), 0) AS grams,
                   COALESCE(SUM(print_time_min), 0) AS minutes,
-                  SUM(status = 'gelukt') AS ok,
-                  SUM(status = 'mislukt') AS failed
+                  SUM(status = 'succeeded') AS ok,
+                  SUM(status = 'failed') AS failed
            FROM prints"""
     ).fetchone()
     nozzles = [r[0] for r in db.execute("SELECT DISTINCT nozzle FROM prints WHERE nozzle > 0 ORDER BY nozzle")]
@@ -427,7 +501,7 @@ def new_print():
     if request.method == "POST":
         data = form_to_print(request.form)
         if not data["name"]:
-            flash("Geef de print een naam.", "warn")
+            flash("Give the print a name.", "warn")
             return render_template("form.html", p=data, materials=MATERIALS, statuses=STATUSES)
         db = get_db()
         cur = db.execute(
@@ -436,9 +510,9 @@ def new_print():
         )
         db.commit()
         save_uploads(cur.lastrowid, request.files.getlist("files"))
-        flash("Print opgeslagen.", "ok")
+        flash("Print saved.", "ok")
         return redirect(url_for("show_print", print_id=cur.lastrowid))
-    defaults = {"status": "gelukt", "printed_on": date.today().isoformat()}
+    defaults = {"status": "succeeded", "printed_on": date.today().isoformat()}
     only = get_db().execute("SELECT id FROM printers").fetchall()
     if len(only) == 1:
         defaults["printer_id"] = only[0]["id"]
@@ -461,7 +535,7 @@ def import_print():
     if cover:
         save_makerworld_cover(db, cur.lastrowid, cover)
     db.commit()
-    flash("Geïmporteerd van MakerWorld. Vul aan wat nog ontbreekt en upload eventueel het 3mf-bestand.", "ok")
+    flash("Imported from MakerWorld. Fill in what is missing and upload the 3mf file if you have it.", "ok")
     return redirect(url_for("edit_print", print_id=cur.lastrowid))
 
 
@@ -469,10 +543,10 @@ def import_print():
 def import_file():
     upload = request.files.get("file")
     if not upload or not upload.filename or ext_of(upload.filename) not in {"3mf", "gcode"}:
-        flash("Kies een .3mf- of .gcode-bestand.", "warn")
+        flash("Choose a .3mf or .gcode file.", "warn")
         return redirect(url_for("new_print"))
     db = get_db()
-    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'gepland')", ("Import…",))
+    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'planned')", ("Import…",))
     print_id = cur.lastrowid
     save_uploads(print_id, [upload])
     f = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id DESC LIMIT 1", (print_id,)).fetchone()
@@ -482,12 +556,12 @@ def import_file():
     except slicer.ParseError as e:
         db.execute("UPDATE prints SET name = ? WHERE id = ?", (upload.filename[:200], print_id))
         db.commit()
-        flash(f"{e} Het bestand is wel bewaard; vul de rest zelf in.", "warn")
+        flash(f"{e} The file was kept; fill in the rest yourself.", "warn")
         return redirect(url_for("edit_print", print_id=print_id))
     if found:
-        flash(f"Ingelezen: {', '.join(found)}.{plate_info}", "ok")
+        flash(f"Read: {', '.join(found)}.{plate_info}", "ok")
     else:
-        flash("Bestand bewaard, maar er stonden geen slicergegevens in. Vul de rest zelf in.", "warn")
+        flash("File kept, but it contained no slicer data. Fill in the rest yourself.", "warn")
     return redirect(url_for("edit_print", print_id=print_id))
 
 
@@ -499,7 +573,7 @@ def apply_file(file_id):
     try:
         found, plate_info = apply_slicer_file(f["print_id"], os.path.join(UPLOAD_DIR, f["stored_name"]),
                                               f["original_name"], num(request.form.get("plate"), int))
-        flash((f"Ingelezen: {', '.join(found)}." if found else "Geen slicergegevens gevonden.") + plate_info,
+        flash((f"Read: {', '.join(found)}." if found else "No slicer data found.") + plate_info,
               "ok" if found else "warn")
     except slicer.ParseError as e:
         flash(str(e), "warn")
@@ -529,7 +603,7 @@ def edit_print(print_id):
     if request.method == "POST":
         data = form_to_print(request.form)
         if not data["name"]:
-            flash("Geef de print een naam.", "warn")
+            flash("Give the print a name.", "warn")
             return render_template("form.html", p={**data, "id": print_id}, materials=MATERIALS, statuses=STATUSES)
         db = get_db()
         mw_msg = enrich_from_makerworld(db, print_id, p, data)
@@ -539,7 +613,7 @@ def edit_print(print_id):
         )
         db.commit()
         save_uploads(print_id, request.files.getlist("files"))
-        flash("Wijzigingen opgeslagen.", "ok")
+        flash("Changes saved.", "ok")
         if mw_msg:
             flash(*mw_msg)
         return redirect(url_for("show_print", print_id=print_id))
@@ -557,7 +631,7 @@ def delete_print(print_id):
             pass
     db.execute("DELETE FROM prints WHERE id = ?", (print_id,))
     db.commit()
-    flash("Print verwijderd.", "ok")
+    flash("Print deleted.", "ok")
     return redirect(url_for("index"))
 
 
@@ -567,11 +641,11 @@ def add_photos(print_id):
     uploads = [f for f in request.files.getlist("photos") if f and f.filename]
     photos = [f for f in uploads if ext_of(f.filename) in PHOTO_EXT]
     if len(photos) < len(uploads):
-        flash("Alleen foto's (jpg, png, webp, gif) kunnen hier; andere bestanden zijn overgeslagen.", "warn")
+        flash("Only photos (jpg, png, webp, gif) can go here; other files were skipped.", "warn")
     if photos:
         save_uploads(print_id, photos)
-        flash(f"{len(photos)} " + ("foto" if len(photos) == 1 else "foto's") + " toegevoegd.", "ok")
-    return redirect(url_for("show_print", print_id=print_id) + "#fotos")
+        flash(f"{len(photos)} " + ("photo" if len(photos) == 1 else "photos") + " added.", "ok")
+    return redirect(url_for("show_print", print_id=print_id) + "#photos")
 
 
 @app.route("/file/<int:file_id>/cover", methods=["POST"])
@@ -582,7 +656,7 @@ def set_cover(file_id):
         abort(404)
     db.execute("UPDATE prints SET cover_file_id = ? WHERE id = ?", (file_id, f["print_id"]))
     db.commit()
-    return redirect(url_for("show_print", print_id=f["print_id"]) + "#fotos")
+    return redirect(url_for("show_print", print_id=f["print_id"]) + "#photos")
 
 
 @app.route("/file/<int:file_id>/delete", methods=["POST"])
@@ -627,26 +701,26 @@ def printer_from_form(form):
         "notes": form.get("notes", "").strip(),
         "ip": ip if IP_RE.match(ip) else "",
         "serial": re.sub(r"[^A-Za-z0-9]", "", form.get("serial", "")),
-        # leeg laten = huidige access code behouden (die wordt nooit terug in het formulier gezet)
+        # left empty = keep the current access code (it is never put back into the form)
         "access_code": form.get("access_code", "").strip(),
         "mqtt_enabled": 1 if form.get("mqtt_enabled") else 0,
     }
 
 
 def public_printer(row_or_dict):
-    """Printergegevens voor het formulier, zonder access code."""
+    """Printer data for the form, without the access code."""
     d = dict(row_or_dict)
     d["has_access_code"] = bool(d.pop("access_code", None))
     return d
 
 
 def save_printer_photo(upload):
-    """Slaat een geüploade printerfoto op en geeft de stored_name terug (of None)."""
+    """Stores an uploaded printer photo and returns its stored_name (or None)."""
     if not upload or not upload.filename:
         return None
     ext = ext_of(upload.filename)
     if ext not in PHOTO_EXT:
-        flash("Printerfoto overgeslagen: alleen jpg, png, webp of gif.", "warn")
+        flash("Printer photo skipped: only jpg, png, webp or gif.", "warn")
         return None
     stored = f"{uuid.uuid4().hex}.{ext}"
     upload.save(os.path.join(UPLOAD_DIR, stored))
@@ -668,7 +742,7 @@ def printers():
         """SELECT pr.*, COUNT(p.id) AS n,
                   COALESCE(SUM(p.filament_g), 0) AS grams,
                   COALESCE(SUM(p.print_time_min), 0) AS minutes,
-                  SUM(p.status = 'gelukt') AS ok
+                  SUM(p.status = 'succeeded') AS ok
            FROM printers pr LEFT JOIN prints p ON p.printer_id = pr.id
            GROUP BY pr.id ORDER BY pr.name"""
     ).fetchall()
@@ -682,7 +756,7 @@ def new_printer():
     if request.method == "POST":
         data = printer_from_form(request.form)
         if not data["name"]:
-            flash("Geef de printer een naam.", "warn")
+            flash("Give the printer a name.", "warn")
             return render_template("printer_form.html", pr=public_printer(data))
         data["photo"] = save_printer_photo(request.files.get("photo"))
         data["access_code"] = data["access_code"] or None
@@ -690,7 +764,7 @@ def new_printer():
         db.execute(f"INSERT INTO printers ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
                    list(data.values()))
         db.commit()
-        flash("Printer toegevoegd.", "ok")
+        flash("Printer added.", "ok")
         return redirect(url_for("printers"))
     return render_template("printer_form.html", pr={})
 
@@ -704,7 +778,7 @@ def edit_printer(printer_id):
     if request.method == "POST":
         data = printer_from_form(request.form)
         if not data["name"]:
-            flash("Geef de printer een naam.", "warn")
+            flash("Give the printer a name.", "warn")
             return render_template("printer_form.html", pr=public_printer({**data, "id": printer_id, "photo": pr["photo"]}))
         photo = pr["photo"]
         new_photo = save_printer_photo(request.files.get("photo"))
@@ -717,7 +791,7 @@ def edit_printer(printer_id):
         db.execute(f"UPDATE printers SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
                    [*data.values(), printer_id])
         db.commit()
-        flash("Printer opgeslagen.", "ok")
+        flash("Printer saved.", "ok")
         return redirect(url_for("printers"))
     return render_template("printer_form.html", pr=public_printer(pr))
 
@@ -732,7 +806,7 @@ def delete_printer(printer_id):
     db.execute("UPDATE prints SET printer_id = NULL WHERE printer_id = ?", (printer_id,))
     db.execute("DELETE FROM printers WHERE id = ?", (printer_id,))
     db.commit()
-    flash("Printer verwijderd. De prints zelf blijven bewaard.", "ok")
+    flash("Printer deleted. Its prints are kept.", "ok")
     return redirect(url_for("printers"))
 
 
@@ -740,17 +814,17 @@ def delete_printer(printer_id):
 
 cameras = camera.CameraManager()
 
-# Snapshots worden per printer ~20 s bewaard (ook een mislukte poging), zodat meerdere open
-# tabbladen samen hoogstens één verbinding per 20 s naar de printer maken.
+# Snapshots are kept ~20 s per printer (a failed attempt too), so that several open tabs
+# together make at most one connection to the printer every 20 s.
 SNAPSHOT_CACHE_SECONDS = 20
-_snapshots = {}                   # printer_id -> (rtsp-url, tijdstip, jpeg of CameraError)
+_snapshots = {}                   # printer_id -> (rtsp url, time, jpeg or CameraError)
 _snapshot_locks = {}
 _snapshot_locks_guard = threading.Lock()
 
 
 def cached_snapshot(printer_id, ip, access_code):
-    """JPEG van de printer: vers beeld van een lopende live stream, anders uit de cache of nieuw opgehaald.
-    Geeft CameraError (ook uit de cache) als er geen beeld is."""
+    """JPEG from the printer: a fresh frame from a running live stream, else from the cache or fetched anew.
+    Raises CameraError (also a cached one) when there is no image."""
     url = camera.rtsp_url(ip, access_code)
     cam = cameras.peek(printer_id)
     if cam is not None and cam.url == url:
@@ -759,7 +833,7 @@ def cached_snapshot(printer_id, ip, access_code):
             return jpeg
     with _snapshot_locks_guard:
         lock = _snapshot_locks.setdefault(printer_id, threading.Lock())
-    with lock:   # gelijktijdige verzoeken wachten op één ophaling
+    with lock:   # concurrent requests wait for a single fetch
         hit = _snapshots.get(printer_id)
         if hit is None or hit[0] != url or time.monotonic() - hit[1] >= SNAPSHOT_CACHE_SECONDS:
             try:
@@ -803,7 +877,7 @@ def camera_snapshot(printer_id):
     return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-# ---------- Onderhoud ----------
+# ---------- Maintenance ----------
 
 def get_printer(printer_id):
     pr = get_db().execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
@@ -837,22 +911,22 @@ def task_from_form(form):
 
 def task_errors(data):
     if not data["name"]:
-        return "Geef de taak een naam."
+        return "Give the task a name."
     if not data["interval_hours"] and not data["interval_days"]:
-        return "Geef een interval in printuren en/of dagen."
+        return "Give an interval in print hours and/or days."
     return None
 
 
 @app.template_filter("localinput")
 def localinput(iso):
-    """ISO-tijd → waarde voor <input type=datetime-local> in de lokale tijdzone."""
+    """ISO time → value for <input type=datetime-local> in the local time zone."""
     try:
         return maintenance.parse_time(iso).astimezone(maintenance.TZ).strftime("%Y-%m-%dT%H:%M")
     except (TypeError, ValueError):
         return ""
 
 
-@app.route("/printers/<int:printer_id>/onderhoud", methods=["GET", "POST"])
+@app.route("/printers/<int:printer_id>/maintenance", methods=["GET", "POST"])
 def printer_maintenance(printer_id):
     pr = get_printer(printer_id)
     db = get_db()
@@ -867,23 +941,23 @@ def printer_maintenance(printer_id):
             db.execute(f"INSERT INTO maintenance_tasks ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
                        list(data.values()))
             db.commit()
-            flash("Onderhoudstaak toegevoegd.", "ok")
+            flash("Maintenance task added.", "ok")
         return redirect(url_for("printer_maintenance", printer_id=printer_id))
     return render_template("maintenance.html", pr=pr, tasks=maintenance.tasks_for_printer(db, printer_id),
                            now=localinput(maintenance.now_local().isoformat()))
 
 
-@app.route("/printers/<int:printer_id>/onderhoud/standaard", methods=["POST"])
+@app.route("/printers/<int:printer_id>/maintenance/defaults", methods=["POST"])
 def seed_maintenance(printer_id):
     get_printer(printer_id)
     db = get_db()
     maintenance.seed_defaults(db, printer_id)
     db.commit()
-    flash("Standaardtaken toegevoegd. Pas de intervallen gerust aan.", "ok")
+    flash("Default tasks added. Feel free to adjust the intervals.", "ok")
     return redirect(url_for("printer_maintenance", printer_id=printer_id))
 
 
-@app.route("/onderhoud/<int:task_id>/edit", methods=["GET", "POST"])
+@app.route("/maintenance/<int:task_id>/edit", methods=["GET", "POST"])
 def edit_maintenance(task_id):
     t = get_task(task_id)
     pr = get_printer(t["printer_id"])
@@ -897,35 +971,35 @@ def edit_maintenance(task_id):
         db.execute(f"UPDATE maintenance_tasks SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
                    [*data.values(), task_id])
         db.commit()
-        flash("Onderhoudstaak opgeslagen.", "ok")
+        flash("Maintenance task saved.", "ok")
         return redirect(url_for("printer_maintenance", printer_id=pr["id"]))
     return render_template("maintenance_form.html", t=t, pr=pr)
 
 
-@app.route("/onderhoud/<int:task_id>/done", methods=["POST"])
+@app.route("/maintenance/<int:task_id>/done", methods=["POST"])
 def done_maintenance(task_id):
     t = get_task(task_id)
     db = get_db()
     db.execute("UPDATE maintenance_tasks SET last_done_at = ?, notified_at = NULL WHERE id = ?",
                (maintenance.now_local().isoformat(), task_id))
     db.commit()
-    flash(f"'{t['name']}' gemarkeerd als uitgevoerd.", "ok")
+    flash(f"'{t['name']}' marked as done.", "ok")
     return redirect(url_for("printer_maintenance", printer_id=t["printer_id"]))
 
 
-@app.route("/onderhoud/<int:task_id>/delete", methods=["POST"])
+@app.route("/maintenance/<int:task_id>/delete", methods=["POST"])
 def delete_maintenance(task_id):
     t = get_task(task_id)
     db = get_db()
     db.execute("DELETE FROM maintenance_tasks WHERE id = ?", (task_id,))
     db.commit()
-    flash("Onderhoudstaak verwijderd.", "ok")
+    flash("Maintenance task deleted.", "ok")
     return redirect(url_for("printer_maintenance", printer_id=t["printer_id"]))
 
 
-# ---------- Instellingen (ntfy) ----------
+# ---------- Settings (ntfy) ----------
 
-@app.route("/instellingen", methods=["GET", "POST"])
+@app.route("/settings", methods=["GET", "POST"])
 def settings():
     db = get_db()
     cfg = notify.load_settings(db)
@@ -936,10 +1010,10 @@ def settings():
         values = {"ntfy_url": url, "ntfy_topic": topic}
         problems = []
         if url and not notify.URL_RE.match(url):
-            problems.append("De ntfy-URL moet met http:// of https:// beginnen (bv. https://ntfy.sh).")
+            problems.append("The ntfy URL must start with http:// or https:// (e.g. https://ntfy.sh).")
             values.pop("ntfy_url")
         if topic and not notify.TOPIC_RE.match(topic):
-            problems.append("Een topic mag alleen letters, cijfers, - en _ bevatten (max. 64 tekens).")
+            problems.append("A topic may only contain letters, digits, - and _ (max. 64 characters).")
             values.pop("ntfy_topic")
         token = f.get("ntfy_token", "").strip()
         if f.get("clear_token"):
@@ -952,7 +1026,7 @@ def settings():
         db.commit()
         for p in problems:
             flash(p, "warn")
-        flash("Instellingen opgeslagen." + (" Andere velden zijn niet gewijzigd." if problems else ""),
+        flash("Settings saved." + (" Other fields were not changed." if problems else ""),
               "warn" if problems else "ok")
         return redirect(url_for("settings"))
     public = {k: v for k, v in cfg.items() if k != "ntfy_token"}
@@ -960,18 +1034,29 @@ def settings():
     return render_template("settings.html", cfg=public)
 
 
-@app.route("/instellingen/test", methods=["POST"])
+@app.route("/settings/test", methods=["POST"])
 def settings_test():
     cfg = notify.load_settings(get_db())
     try:
-        notify.post(cfg, "Printvault: testmelding", "Meldingen komen goed aan.", tags=["tada"])
-        flash("Testmelding verstuurd.", "ok")
+        notify.post(cfg, "Printvault: test notification", "Notifications are arriving.", tags=["tada"])
+        flash("Test notification sent.", "ok")
     except notify.NotifyError as e:
         flash(str(e), "warn")
     return redirect(url_for("settings"))
 
 
-# ---------- Live status (van de MQTT-listener) ----------
+# Old Dutch URLs (bookmarks) keep working.
+@app.route("/instellingen")
+def legacy_settings():
+    return redirect(url_for("settings"), 301)
+
+
+@app.route("/printers/<int:printer_id>/onderhoud")
+def legacy_maintenance(printer_id):
+    return redirect(url_for("printer_maintenance", printer_id=printer_id), 301)
+
+
+# ---------- Live status (from the MQTT listener) ----------
 
 LIVE_URL = os.environ.get("LIVE_URL", "http://127.0.0.1:8101/live")
 
@@ -990,7 +1075,7 @@ def api_live():
             continue
         if p.get("ams"):
             p["ams_history"] = ams_history(p.get("printer_id"))
-        # beeld naast de statuskaart: omslag van de print (en of het een eigen foto is), anders de printerfoto
+        # image next to the status card: the print's cover (and whether it is an own photo), else the printer photo
         p["cover"] = p["own_cover"] = None
         if p.get("print_id"):
             row = db.execute(f"SELECT {COVER_SQL} AS cover, {OWN_COVER_SQL} AS own FROM prints p WHERE p.id = ?",
@@ -1005,7 +1090,7 @@ def api_live():
 
 
 def ams_history(printer_id, hours=24):
-    """AMS-metingen van de laatste `hours` uur per unit: {ams_id: [[tijd, %, niveau, °C], …]}."""
+    """AMS readings of the last `hours` hours per unit: {ams_id: [[time, %, level, °C], …]}."""
     rows = get_db().execute(
         "SELECT ams_id, recorded_at, humidity_pct, humidity_level, temp FROM ams_readings "
         "WHERE printer_id = ? AND datetime(recorded_at) >= datetime('now', ?) ORDER BY recorded_at",
@@ -1016,7 +1101,7 @@ def ams_history(printer_id, hours=24):
     return out
 
 
-# ---------- MakerWorld-import ----------
+# ---------- MakerWorld import ----------
 
 MW_API = "https://makerworld.com/api/v1/design-service/design/{}"
 MW_URL = re.compile(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d+)", re.I)
@@ -1034,7 +1119,7 @@ def _http_get(url, limit):
     with urllib.request.urlopen(req, timeout=20) as resp:
         body = resp.read(limit + 1)
     if len(body) > limit:
-        raise MakerWorldError("Antwoord van MakerWorld is te groot.")
+        raise MakerWorldError("Response from MakerWorld is too large.")
     return body
 
 
@@ -1045,20 +1130,20 @@ def _strip_html(text):
 
 
 def fetch_makerworld(url):
-    """Haalt metadata van een MakerWorld-model op. Geeft (printdata, cover) terug;
-    cover is (bytes, extensie) of None."""
+    """Fetches the metadata of a MakerWorld model. Returns (print data, cover);
+    cover is (bytes, extension) or None."""
     m = MW_URL.match(url)
     if not m:
-        raise MakerWorldError("Dat lijkt geen MakerWorld-modellink (https://makerworld.com/…/models/…).")
+        raise MakerWorldError("That does not look like a MakerWorld model link (https://makerworld.com/…/models/…).")
     design_id = m.group(2)
     try:
         d = json.loads(_http_get(MW_API.format(design_id), 5 * 1024 * 1024))
     except MakerWorldError:
         raise
     except Exception as e:
-        raise MakerWorldError(f"MakerWorld kon niet worden opgehaald ({e}). Vul de print handmatig in.")
+        raise MakerWorldError(f"Could not fetch MakerWorld ({e}). Fill in the print manually.")
     if not d.get("title"):
-        raise MakerWorldError("Model niet gevonden op MakerWorld.")
+        raise MakerWorldError("Model not found on MakerWorld.")
 
     instances = d.get("instances") or []
     inst = next((i for i in instances if i.get("id") == d.get("defaultInstanceId")), None) \
@@ -1070,18 +1155,18 @@ def fetch_makerworld(url):
     types = {f.get("type", "").upper() for f in filaments if f.get("type")}
     if len(types) == 1:
         t = types.pop()
-        material = t if t in MATERIALS else "Ander"
+        material = t if t in MATERIALS else "Other"
     elif types:
-        material = "Ander"
+        material = "Other"
 
     notes = []
     if inst.get("title"):
-        notes.append(f"Profiel: {inst['title']}")
+        notes.append(f"Profile: {inst['title']}")
     if filaments:
         notes.append("Filament: " + ", ".join(
             f"{f.get('type', '?')} {f.get('color', '')} ({f.get('usedG', '?')} g)".strip() for f in filaments))
     if inst.get("needAms"):
-        notes.append("Vereist AMS.")
+        notes.append("Requires AMS.")
     summary = _strip_html(d.get("summary"))
     if summary:
         notes.append("")
@@ -1091,14 +1176,14 @@ def fetch_makerworld(url):
     prediction = inst.get("prediction")
     data = {
         "name": d["title"][:200],
-        "description": f"MakerWorld-model door {creator.get('name')}" if creator.get("name") else "MakerWorld-model",
+        "description": f"MakerWorld model by {creator.get('name')}" if creator.get("name") else "MakerWorld model",
         "material": material,
         "color": filaments[0].get("color", "") if len(filaments) == 1 else "",
         "filament_g": float(inst["weight"]) if inst.get("weight") else None,
         "print_time_min": round(prediction / 60) if prediction else None,
         "layer_height": None,
         "nozzle": None,
-        "status": "gepland",
+        "status": "planned",
         "tags": ", ".join((d.get("tags") or [])[:8]),
         "notes": "\n".join(notes),
         "printed_on": None,
@@ -1133,14 +1218,14 @@ def save_makerworld_cover(db, print_id, cover):
     )
 
 
-# Velden die bij het bewerken uit MakerWorld aangevuld worden als ze nog leeg zijn.
-# Status, datum, printtijd en printer komen van de printer zelf en blijven ongemoeid.
+# Fields filled in from MakerWorld when editing, if they are still empty.
+# Status, date, print time and printer come from the printer itself and are left alone.
 MW_FILL_FIELDS = ("description", "material", "color", "filament_g", "layer_height", "tags", "designer", "license")
 
 
 def enrich_from_makerworld(db, print_id, old, data):
-    """Vult `data` aan met MakerWorld-gegevens als er een (nieuwe) MakerWorld-link is opgegeven,
-    of als de print nog geen MakerWorld-omslag heeft. Geeft een flash-bericht terug of None."""
+    """Completes `data` with MakerWorld data when a (new) MakerWorld link was given,
+    or when the print has no MakerWorld cover yet. Returns a flash message or None."""
     url = data.get("source_url") or ""
     if not MW_URL.match(url):
         return None
@@ -1151,7 +1236,7 @@ def enrich_from_makerworld(db, print_id, old, data):
     try:
         mw, cover = fetch_makerworld(url)
     except MakerWorldError as e:
-        return (f"Link bewaard, maar MakerWorld-gegevens ophalen lukte niet: {e}", "warn")
+        return (f"Link saved, but fetching the MakerWorld data failed: {e}", "warn")
     filled = [k for k in MW_FILL_FIELDS if not data.get(k) and mw.get(k)]
     for k in filled:
         data[k] = mw[k]
@@ -1160,12 +1245,12 @@ def enrich_from_makerworld(db, print_id, old, data):
     data["source_url"] = mw["source_url"]
     if cover and not has_cover:
         save_makerworld_cover(db, print_id, cover)
-    return ("MakerWorld-gegevens aangevuld" + (" (met afbeelding)." if cover and not has_cover else "."), "ok")
+    return ("MakerWorld data filled in" + (" (with image)." if cover and not has_cover else "."), "ok")
 
 
 @app.errorhandler(413)
 def too_large(_e):
-    flash("Bestand te groot.", "warn")
+    flash("File too large.", "warn")
     return redirect(request.referrer or url_for("index"))
 
 

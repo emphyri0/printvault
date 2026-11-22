@@ -1,41 +1,41 @@
 {% extends "base.html" %}
-{% block title %}{{ "Bewerk printer" if pr.id else "Nieuwe printer" }} · Printvault{% endblock %}
+{% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault{% endblock %}
 {% block content %}
 <div class="head">
-  <h1>{{ "Bewerk " ~ pr.name if pr.id else "Nieuwe printer" }}</h1>
+  <h1>{{ "Edit " ~ pr.name if pr.id else "New printer" }}</h1>
   {% if pr.id %}
   <details class="confirm">
-    <summary class="btn danger">Verwijder</summary>
+    <summary class="btn danger">Delete</summary>
     <form method="post" action="{{ url_for('delete_printer', printer_id=pr.id) }}">
-      <p>Printer verwijderen? De prints blijven bewaard, alleen zonder printer.</p>
-      <button class="btn danger">Ja, verwijder</button>
+      <p>Delete this printer? Its prints are kept, just without a printer.</p>
+      <button class="btn danger">Yes, delete</button>
     </form>
   </details>
   {% endif %}
 </div>
 <form class="form" method="post" enctype="multipart/form-data">
-  <label>Naam *<input name="name" value="{{ pr.name or '' }}" required autofocus placeholder="bv. Bambu"></label>
-  <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="bv. Bambu Lab P2S + AMS 2 Pro"></label>
-  <label class="wide">Notities<textarea name="notes" rows="4" placeholder="Nozzles, aankoopdatum, serienummer, upgrades…">{{ pr.notes or '' }}</textarea></label>
+  <label>Name *<input name="name" value="{{ pr.name or '' }}" required autofocus placeholder="e.g. Bambu"></label>
+  <label>Model<input name="model" value="{{ pr.model or '' }}" placeholder="e.g. Bambu Lab P2S + AMS 2 Pro"></label>
+  <label class="wide">Notes<textarea name="notes" rows="4" placeholder="Nozzles, purchase date, serial number, upgrades…">{{ pr.notes or '' }}</textarea></label>
   <fieldset class="wide mqtt">
-    <legend>Live koppeling (Bambu Lab, alleen lezen)</legend>
-    <p class="hint">Printvault luistert via MQTT mee en houdt prints automatisch bij. Er wordt niets naar de printer gestuurd; cloudmodus kan aan blijven. IP en access code vind je op de printer onder Instellingen → Netwerk/WLAN.</p>
-    <label>IP-adres<input name="ip" value="{{ pr.ip or '' }}" placeholder="bv. 192.0.2.10" inputmode="decimal" autocomplete="off"></label>
-    <label>Serienummer<input name="serial" value="{{ pr.serial or '' }}" placeholder="bv. 00M00A000000000" autocomplete="off"></label>
+    <legend>Live connection (Bambu Lab, read-only)</legend>
+    <p class="hint">Printvault listens in via MQTT and keeps track of prints automatically. Nothing is sent to the printer; cloud mode can stay on. You find the IP and access code on the printer under Settings → Network/WLAN.</p>
+    <label>IP address<input name="ip" value="{{ pr.ip or '' }}" placeholder="e.g. 192.0.2.10" inputmode="decimal" autocomplete="off"></label>
+    <label>Serial number<input name="serial" value="{{ pr.serial or '' }}" placeholder="e.g. 00M00A000000000" autocomplete="off"></label>
     <label>Access code<input type="password" name="access_code" value="" autocomplete="new-password"
-      placeholder="{{ 'ingesteld, leeg laten om te behouden' if pr.has_access_code else '8 tekens' }}"></label>
-    <span class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live koppeling aan</span>
+      placeholder="{{ 'set, leave empty to keep' if pr.has_access_code else '8 characters' }}"></label>
+    <span class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live connection on</span>
   </fieldset>
-  <label class="wide">Foto
+  <label class="wide">Photo
     {% if pr.photo %}
     <img class="preview" src="{{ url_for('uploaded', stored_name=pr.photo) }}" alt="">
-    <span class="check"><input type="checkbox" name="remove_photo" value="1"> Huidige foto verwijderen</span>
+    <span class="check"><input type="checkbox" name="remove_photo" value="1"> Remove current photo</span>
     {% endif %}
     <input type="file" name="photo" accept=".jpg,.jpeg,.png,.webp,.gif">
   </label>
   <div class="actions wide">
-    <button class="btn primary">Opslaan</button>
-    <a class="btn ghost" href="{{ url_for('printers') }}">Annuleer</a>
+    <button class="btn primary">Save</button>
+    <a class="btn ghost" href="{{ url_for('printers') }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

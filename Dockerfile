@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 WORKDIR /app
-# ffmpeg zet het RTSPS-camerabeeld van de printer om naar JPEG
+# ffmpeg converts the printer's RTSPS camera stream to JPEG
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

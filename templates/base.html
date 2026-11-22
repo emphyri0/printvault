@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="nl">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -12,9 +12,9 @@
       <a class="brand" href="{{ url_for('index') }}">Printvault</a>
       <a class="navlink {% if request.endpoint == 'index' %}active{% endif %}" href="{{ url_for('index') }}">Prints</a>
       <a class="navlink {% if request.endpoint and ('printer' in request.endpoint or 'maintenance' in request.endpoint) %}active{% endif %}" href="{{ url_for('printers') }}">Printers</a>
-      <a class="navlink {% if request.endpoint and request.endpoint.startswith('settings') %}active{% endif %}" href="{{ url_for('settings') }}">Instellingen</a>
+      <a class="navlink {% if request.endpoint and request.endpoint.startswith('settings') %}active{% endif %}" href="{{ url_for('settings') }}">Settings</a>
     </nav>
-    <a class="btn primary" href="{{ url_for('new_print') }}">+ Nieuwe print</a>
+    <a class="btn primary" href="{{ url_for('new_print') }}">+ New print</a>
   </header>
   <main>
     {% with messages = get_flashed_messages(with_categories=true) %}

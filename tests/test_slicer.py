@@ -1,6 +1,6 @@
-"""Tests voor slicer.py met zelfgebouwde bestanden in Bambu Studio-structuur.
+"""Tests for slicer.py with hand-built files in the Bambu Studio structure.
 
-Draaien:  python3 -m unittest discover -s tests
+Run:  python3 -m unittest discover -s tests
 """
 import base64
 import json
@@ -15,7 +15,7 @@ import zlib
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import slicer  # noqa: E402
 
-MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Ander"]
+MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Other"]
 
 
 def png(rgb=(255, 0, 0)):
@@ -150,7 +150,7 @@ class SlicerTests(unittest.TestCase):
         fields, fil, thumb = slicer.plate_to_print_fields(slicer.parse(path, "x.gcode.3mf"), 2, MATERIALS)
         self.assertEqual(fields["print_time_min"], 200)
         self.assertEqual(fields["filament_g"], 80.1)
-        self.assertEqual(fields["material"], "Ander")
+        self.assertEqual(fields["material"], "Other")
         self.assertEqual(fields["color"], "")
         self.assertEqual(len(fil), 2)
         self.assertEqual(thumb[0], png((0, 0, 255)))
@@ -202,7 +202,7 @@ class SlicerTests(unittest.TestCase):
     def test_bad_zip(self):
         path = os.path.join(self.dir, "kapot.3mf")
         with open(path, "wb") as fh:
-            fh.write(b"geen zip")
+            fh.write(b"not a zip")
         with self.assertRaises(slicer.ParseError):
             slicer.parse(path, "kapot.3mf")
 

@@ -1,12 +1,12 @@
-"""Uitlezen van geslicede bestanden (Bambu Studio / Orca / PrusaSlicer).
+"""Reading sliced files (Bambu Studio / Orca / PrusaSlicer).
 
-parse(path, filename) geeft een dict terug:
+parse(path, filename) returns a dict:
     {
       "name": str | None,
       "plates": [ {"index": 1, "fields": {...}, "filaments": [...], "thumbnail": (bytes, "png") | None}, ... ],
-      "settings": {...},          # plaat-onafhankelijke instellingen
+      "settings": {...},          # plate-independent settings
     }
-Alle velden zijn optioneel; wat niet in het bestand staat, blijft weg.
+All fields are optional; whatever is not in the file is left out.
 """
 import base64
 import json
@@ -19,7 +19,7 @@ TAIL_BYTES = 1024 * 1024
 MAX_THUMB = 8 * 1024 * 1024
 MAX_MEMBER = 64 * 1024 * 1024
 
-# Bambu: bedtemperatuur hangt af van het plaattype
+# Bambu: the bed temperature depends on the plate type
 BED_TEMP_KEYS = {
     "cool plate": "cool_plate_temp",
     "supertack plate": "supertack_plate_temp",
@@ -35,7 +35,7 @@ class ParseError(Exception):
 
 
 def first(value):
-    """Eerste waarde van een lijst of een ';'/','-gescheiden string."""
+    """First value of a list or of a ';'/','-separated string."""
     if isinstance(value, list):
         value = value[0] if value else None
     if value is None:
@@ -70,7 +70,7 @@ def to_int(value):
 
 
 def parse_duration(text):
-    """'1d 2h 3m 4s' -> minuten."""
+    """'1d 2h 3m 4s' -> minutes."""
     if not text:
         return None
     units = {"d": 1440, "h": 60, "m": 1, "s": 1 / 60}
@@ -82,7 +82,7 @@ def parse_duration(text):
 
 
 def settings_to_fields(cfg):
-    """Gemeenschappelijke slicerinstellingen -> printvelden."""
+    """Common slicer settings -> print fields."""
     out = {}
     lh = to_float(first(cfg.get("layer_height")))
     if lh:
@@ -131,7 +131,7 @@ def parse_3mf(path):
     try:
         zf = zipfile.ZipFile(path)
     except zipfile.BadZipFile:
-        raise ParseError("Dit 3mf-bestand is geen geldig zip-archief.")
+        raise ParseError("This 3mf file is not a valid zip archive.")
     with zf:
         names = set(zf.namelist())
         result = {"name": None, "plates": [], "settings": {}, "filaments": []}
@@ -175,7 +175,7 @@ def parse_3mf(path):
                 } for f in plate.findall("filament")]
                 result["plates"].append({"index": idx, "fields": fields, "filaments": filaments})
 
-        # niet geslicede projectfile: één 'plaat' zonder tijd/gewicht
+        # unsliced project file: one 'plate' without time/weight
         if not result["plates"]:
             plate_ids = sorted({int(m.group(1)) for n in names
                                 if (m := re.match(r"Metadata/plate_(\d+)\.png$", n))}) or [1]
@@ -252,28 +252,28 @@ def parse(path, filename):
         return parse_3mf(path)
     if lower.endswith(".gcode"):
         return parse_gcode(path)
-    raise ParseError("Alleen .3mf en .gcode kunnen worden uitgelezen.")
+    raise ParseError("Only .3mf and .gcode files can be read.")
 
 
 def plate_to_print_fields(parsed, plate_index, materials):
-    """Combineert instellingen + gekozen plaat tot velden voor een print.
-    Geeft (fields, filaments, thumbnail) terug."""
+    """Combines the settings + the chosen plate into fields for a print.
+    Returns (fields, filaments, thumbnail)."""
     plates = parsed["plates"]
     plate = next((p for p in plates if p["index"] == plate_index), plates[0])
     fields = dict(parsed["settings"])
     fields.update({k: v for k, v in plate["fields"].items() if v is not None})
-    # zonder slice-info (projectfile) kennen we enkel de ingestelde slots
+    # without slice info (project file) we only know the configured slots
     filaments = plate["filaments"] or parsed["filaments"]
 
     types = {material_of(f["type"], materials) for f in filaments if f.get("type")}
     if len(types) == 1:
         fields["material"] = types.pop()
     elif types:
-        fields["material"] = "Ander"
+        fields["material"] = "Other"
     if len(filaments) == 1 and filaments[0].get("color"):
         fields["color"] = filaments[0]["color"][:7]
     elif len(filaments) > 1:
-        fields["color"] = ""  # meerkleurig: zie filamentregel in de notities
+        fields["color"] = ""  # multi-colour: see the filament line in the notes
     if len(plates) > 1:
         fields["plate"] = plate["index"]
     return fields, filaments, plate.get("thumbnail")
@@ -282,9 +282,9 @@ def plate_to_print_fields(parsed, plate_index, materials):
 def material_of(ftype, materials):
     t = (ftype or "").upper()
     for m in sorted(materials, key=len, reverse=True):
-        if m != "Ander" and t.startswith(m.upper()):
+        if m != "Other" and t.startswith(m.upper()):
             return m
-    return "Ander"
+    return "Other"
 
 
 def filament_summary(filaments):

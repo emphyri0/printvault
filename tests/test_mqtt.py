@@ -1,6 +1,6 @@
-"""Tests voor mqtt_listener.PrinterTracker met nagebootste Bambu-berichten (geen netwerk).
+"""Tests for mqtt_listener.PrinterTracker with faked Bambu messages (no network).
 
-Draaien:  python3 -m unittest discover -s tests
+Run:  python3 -m unittest discover -s tests
 """
 import json
 import os
@@ -40,7 +40,7 @@ def report(state, name="Bed_scraper", task="1001", percent=0, error=0, **extra):
          "ams": {"ams": [{"id": "0", "tray": [
              {"id": "0", "tray_type": "PLA", "tray_color": "161616FF", "remain": -1},
              {"id": "1", "tray_type": "PETG", "tray_color": "F95D73FF", "remain": -1},
-             {"id": "2"},  # leeg slot
+             {"id": "2"},  # empty slot
              {"id": "3", "tray_type": "PLA", "tray_color": "url(x)", "remain": -1}]}]}}
     p.update(extra)
     return {"print": p}
@@ -73,22 +73,22 @@ class TrackerTest(unittest.TestCase):
         t.handle(report("IDLE"))
         self.assertEqual(self.prints(), [])
         t.handle(report("PREPARE"))
-        for _ in range(5):                       # herhaalde volledige status: geen effect
+        for _ in range(5):                       # repeated full status: no effect
             t.handle(report("RUNNING", percent=40))
         rows = self.prints()
         self.assertEqual(len(rows), 1)
         p = rows[0]
-        self.assertEqual((p["status"], p["name"], p["printer_id"], p["source"]), ("bezig", "Bed_scraper", self.printer_id, "mqtt"))
+        self.assertEqual((p["status"], p["name"], p["printer_id"], p["source"]), ("printing", "Bed_scraper", self.printer_id, "mqtt"))
         self.assertEqual(p["started_at"], "2026-11-18T19:00:00+01:00")
         self.assertEqual(p["printed_on"], "2026-11-18")
-        self.assertEqual(p["notes"], "")         # start live gezien
+        self.assertEqual(p["notes"], "")         # start seen live
         self.assertEqual(self.ams(p["id"]), [("0", "0", "PLA", "161616FF"), ("0", "1", "PETG", "F95D73FF"),
                                             ("0", "3", "PLA", "")])
         self.clock.advance(83)
         t.handle(report("FINISH", percent=100))
         t.handle(report("IDLE"))
         p = self.prints()[0]
-        self.assertEqual((p["status"], p["print_time_min"]), ("gelukt", 83))
+        self.assertEqual((p["status"], p["print_time_min"]), ("succeeded", 83))
         self.assertEqual(p["finished_at"], "2026-11-18T20:23:00+01:00")
 
     def test_failed_keeps_error(self):
@@ -97,49 +97,49 @@ class TrackerTest(unittest.TestCase):
         self.clock.advance(10)
         t.handle(report("FAILED", error=0x07008011))
         p = self.prints()[0]
-        self.assertEqual((p["status"], p["print_error"]), ("mislukt", 0x07008011))
-        self.assertEqual(p["fail_note"], "Printerfout 0700-8011: AMS filament is op. Plaats een nieuw filament in dezelfde AMS-sleuf.")
+        self.assertEqual((p["status"], p["print_error"]), ("failed", 0x07008011))
+        self.assertEqual(p["fail_note"], "Printer error 0700-8011: AMS filament ran out. Please insert a new filament into the same AMS slot.")
         self.assertIsNone(p["fail_reason"])
         self.assertEqual(p["print_time_min"], 10)
 
     def test_failed_with_known_code_fills_reason_and_hms(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
-        hms = [{"attr": 0x0C00FFFF, "code": 0x0003FFFF}]       # onbekende HMS-code
+        hms = [{"attr": 0x0C00FFFF, "code": 0x0003FFFF}]       # unknown HMS code
         t.handle(report("FAILED", error=0x03008003, hms=hms))
         p = self.prints()[0]
         self.assertEqual(p["fail_reason"], "spaghetti")
-        self.assertEqual(p["fail_note"], "Printerfout 0300-8003: " + be.PRINT_ERRORS["0300-8003"] + "\n"
-                                         "HMS 0C00_FFFF_0003_FFFF (camera/AI-detectie)")
+        self.assertEqual(p["fail_note"], "Printer error 0300-8003: " + be.PRINT_ERRORS["0300-8003"] + "\n"
+                                         "HMS 0C00_FFFF_0003_FFFF (camera/AI detection)")
 
     def test_failed_keeps_manual_reason(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("UPDATE prints SET fail_reason = 'warping', fail_note = 'zelf gezien'")
+            db.execute("UPDATE prints SET fail_reason = 'warping', fail_note = 'saw it myself'")
         t.handle(report("FAILED", error=0x03008003))
         p = self.prints()[0]
-        self.assertEqual((p["fail_reason"], p["fail_note"]), ("warping", "zelf gezien"))
+        self.assertEqual((p["fail_reason"], p["fail_note"]), ("warping", "saw it myself"))
 
     def test_live_has_error_text_and_hms(self):
         t = self.tracker()
         t.handle(report("PAUSE", error=ml.CANCELLED, hms=[{"attr": 0x07002000, "code": 0x00020001}]))
         live = t.live()
-        self.assertEqual((live["error"], live["error_text"]), ("0300-400C", "De taak is geannuleerd."))
+        self.assertEqual((live["error"], live["error_text"]), ("0300-400C", "The task was canceled."))
         self.assertEqual(live["hms"][0]["code"], "0700_2000_0002_0001")
 
     def test_cancelled(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
         t.handle(report("FAILED", error=ml.CANCELLED))
-        self.assertEqual(self.prints()[0]["fail_note"], "Geannuleerd op de printer.")
+        self.assertEqual(self.prints()[0]["fail_note"], "Cancelled on the printer.")
 
     def test_restart_resumes_without_duplicate(self):
         t = self.tracker()
         t.handle(report("PREPARE"))
         t.handle(report("RUNNING"))
         self.clock.advance(30)
-        t2 = self.tracker()                      # listener herstart
+        t2 = self.tracker()                      # listener restarts
         t2.handle(report("RUNNING", percent=60))
         t2.handle(report("RUNNING", percent=61))
         rows = self.prints()
@@ -148,51 +148,51 @@ class TrackerTest(unittest.TestCase):
         self.clock.advance(30)
         t2.handle(report("FINISH"))
         p = self.prints()[0]
-        self.assertEqual((p["status"], p["print_time_min"]), ("gelukt", 60))
+        self.assertEqual((p["status"], p["print_time_min"]), ("succeeded", 60))
 
     def test_restart_after_finish_closes_open_record(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
         self.clock.advance(45)
-        t2 = self.tracker()                      # listener was weg tijdens het einde
+        t2 = self.tracker()                      # listener was away during the end
         t2.handle(report("FINISH"))
         p = self.prints()[0]
-        self.assertEqual((p["status"], p["print_time_min"]), ("gelukt", 45))
-        self.assertIn("Einde niet live gezien", p["notes"])
+        self.assertEqual((p["status"], p["print_time_min"]), ("succeeded", 45))
+        self.assertIn("End not seen live", p["notes"])
 
     def test_listener_starts_mid_print(self):
         t = self.tracker()
         t.handle(report("RUNNING", percent=39))
         p = self.prints()[0]
-        self.assertEqual(p["status"], "bezig")
-        self.assertIn("Start niet live gezien", p["notes"])
+        self.assertEqual(p["status"], "printing")
+        self.assertIn("Start not seen live", p["notes"])
 
     def test_other_task_marks_stale_record(self):
         t = self.tracker()
         t.handle(report("RUNNING", task="1"))
         t2 = self.tracker()
-        t2.handle(report("RUNNING", task="2", name="Ander"))
+        t2.handle(report("RUNNING", task="2", name="Other"))
         rows = self.prints()
-        self.assertEqual([r["status"] for r in rows], ["onbekend", "bezig"])
-        self.assertEqual(rows[1]["name"], "Ander")
+        self.assertEqual([r["status"] for r in rows], ["unknown", "printing"])
+        self.assertEqual(rows[1]["name"], "Other")
 
     def test_new_task_while_connected(self):
         t = self.tracker()
         t.handle(report("RUNNING", task="1"))
-        t.handle(report("RUNNING", task="2", name="Volgende"))   # FINISH gemist
+        t.handle(report("RUNNING", task="2", name="Next"))   # FINISH missed
         rows = self.prints()
-        self.assertEqual([r["status"] for r in rows], ["onbekend", "bezig"])
+        self.assertEqual([r["status"] for r in rows], ["unknown", "printing"])
 
     def test_partial_messages_are_merged(self):
         t = self.tracker()
         t.handle(report("RUNNING", percent=10))
-        t.handle({"print": {"mc_percent": 55, "layer_num": 20}})   # deelbericht zonder gcode_state
+        t.handle({"print": {"mc_percent": 55, "layer_num": 20}})   # partial message without gcode_state
         live = t.live()
         self.assertEqual((live["gcode_state"], live["percent"], live["layer"], live["total_layers"]),
                          ("RUNNING", 55, 20, 37))
         self.assertEqual(len(self.prints()), 1)
         t.handle({"print": {"gcode_state": "FINISH"}})
-        self.assertEqual(self.prints()[0]["status"], "gelukt")
+        self.assertEqual(self.prints()[0]["status"], "succeeded")
 
     def ams_report(self, hum="3", raw="23", temp="24.6", **extra):
         return {"print": {"ams": {"ams": [{"id": "0", "humidity": hum, "humidity_raw": raw, "temp": temp, "tray": []},
@@ -215,11 +215,11 @@ class TrackerTest(unittest.TestCase):
         t.handle(self.ams_report())
         self.assertEqual(self.readings(), [("0", 23.0, 3, 24.6, "2026-11-18T19:00:00+01:00"),
                                            ("1", None, 5, None, "2026-11-18T19:00:00+01:00")])
-        for _ in range(9):                       # elke minuut een bericht: niets extra
+        for _ in range(9):                       # a message every minute: nothing extra
             self.clock.advance(1)
             t.handle(self.ams_report(raw="25"))
         self.assertEqual(len(self.readings()), 2)
-        self.clock.advance(1)                    # 10 minuten na de vorige
+        self.clock.advance(1)                    # 10 minutes after the previous one
         t.handle(self.ams_report(raw="26", temp="25.1"))
         rows = self.readings()
         self.assertEqual(len(rows), 4)
@@ -252,12 +252,12 @@ class TrackerTest(unittest.TestCase):
         b = ml.PrinterTracker(other, "X1C", app.DB_PATH, clock=self.clock)
         a.handle(report("RUNNING", task="1"))
         b.handle(report("RUNNING", task="9"))
-        self.assertEqual([r["status"] for r in self.prints()], ["bezig", "bezig"])
+        self.assertEqual([r["status"] for r in self.prints()], ["printing", "printing"])
 
     def test_supervisor_only_complete_configs(self):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("UPDATE printers SET ip='10.0.0.2', serial='ABC', access_code='x', mqtt_enabled=1")
-            db.execute("INSERT INTO printers (name, ip, serial, mqtt_enabled) VALUES ('zonder code', '10.0.0.3', 'D', 1)")
+            db.execute("INSERT INTO printers (name, ip, serial, mqtt_enabled) VALUES ('no code', '10.0.0.3', 'D', 1)")
         self.assertEqual(list(ml.Supervisor(app.DB_PATH).configs()), [self.printer_id])
 
 
@@ -270,48 +270,74 @@ class AppTest(unittest.TestCase):
 
     def test_access_code_not_rendered_and_kept(self):
         self.c.post("/printers/new", data={"name": "P2S", "ip": "192.0.2.10", "serial": "00M00A 000000000",
-                                           "access_code": "geheim12", "mqtt_enabled": "1"})
+                                           "access_code": "secret12", "mqtt_enabled": "1"})
         html = self.c.get("/printers/1/edit").get_data(as_text=True)
-        self.assertNotIn("geheim12", html)
-        self.assertIn("ingesteld", html)
+        self.assertNotIn("secret12", html)
+        self.assertIn("set, leave empty to keep", html)
         self.c.post("/printers/1/edit", data={"name": "P2S", "ip": "192.0.2.10", "serial": "00M00A000000000",
                                               "access_code": "", "mqtt_enabled": "1"})
         with ml.connect_db(app.DB_PATH) as db:
             row = db.execute("SELECT serial, access_code, mqtt_enabled FROM printers").fetchone()
-        self.assertEqual(tuple(row), ("00M00A000000000", "geheim12", 1))
+        self.assertEqual(tuple(row), ("00M00A000000000", "secret12", 1))
 
-    def test_migrates_listener_opnieuw_to_onbekend(self):
+    def test_migrates_dutch_records(self):
+        """Records from the Dutch version get the English internal values; running it again changes nothing.
+        The Dutch values below are the input of the migration, so they have to stay Dutch."""
+        missed = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
         with ml.connect_db(app.DB_PATH) as db:
-            db.executemany("INSERT INTO prints (name, status, source, notes) VALUES (?, ?, ?, ?)", [
-                ("gemist", "opnieuw", "mqtt", "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."),
-                ("bewust", "opnieuw", None, "Kleur klopte niet"),
-                ("mqtt bewust", "opnieuw", "mqtt", "Handmatig op opnieuw gezet")])
+            db.executemany("INSERT INTO prints (name, status, source, notes, fail_reason, speed_profile, nozzle_type, "
+                           "material) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+                ("missed", "opnieuw", "mqtt", missed, None, "Standaard", "Gehard staal (HS01)", "PLA"),
+                ("deliberate", "opnieuw", None, "Kleur klopte niet", None, None, None, "Ander"),
+                ("ok", "gelukt", "mqtt", "Start niet live gezien: listener startte tijdens de print, starttijd en duur "
+                 "zijn bij benadering.\nFilament (slicer): PLA #FFFFFF", None, "Stil", "Gehard staal, high-flow (HH01)", "PLA"),
+                ("bad", "mislukt", None, "", "stroomuitval", "Ludicrous", "Roestvrij staal (HS00)", "PETG"),
+                ("plan", "gepland", None, "", "verstopping", None, "Eigen nozzle", "PLA"),
+                ("busy", "bezig", "mqtt", "", None, None, None, "PLA")])
+            pid = db.execute("INSERT INTO printers (name) VALUES ('P2S')").lastrowid
+            db.executemany("INSERT INTO maintenance_tasks (printer_id, name, interval_hours) VALUES (?, ?, 25)",
+                           [(pid, "Plaat reinigen (water en afwasmiddel)"), (pid, "Plaat reinigen (eigen manier)")])
         app.init_db()
+        with ml.connect_db(app.DB_PATH) as db:
+            first = [tuple(r) for r in db.execute("SELECT * FROM prints ORDER BY id")]
+            tasks = [r[0] for r in db.execute("SELECT name FROM maintenance_tasks ORDER BY id")]
         app.init_db()                             # idempotent
         with ml.connect_db(app.DB_PATH) as db:
-            rows = db.execute("SELECT name, status FROM prints ORDER BY id").fetchall()
-        self.assertEqual([tuple(r) for r in rows],
-                         [("gemist", "onbekend"), ("bewust", "opnieuw"), ("mqtt bewust", "opnieuw")])
+            rows = db.execute("SELECT * FROM prints ORDER BY id").fetchall()
+        self.assertEqual([tuple(r) for r in rows], first)
+        cols = ("name", "status", "fail_reason", "speed_profile", "nozzle_type", "material")
+        self.assertEqual([tuple(r[c] for c in cols) for r in rows], [
+            ("missed", "unknown", None, "standard", "Hardened steel (HS01)", "PLA"),
+            ("deliberate", "reprint", None, None, None, "Other"),
+            ("ok", "succeeded", None, "silent", "Hardened steel, high-flow (HH01)", "PLA"),
+            ("bad", "failed", "power_loss", "ludicrous", "Stainless steel (HS00)", "PETG"),
+            ("plan", "planned", "clog", None, "Eigen nozzle", "PLA"),       # own text stays
+            ("busy", "printing", None, None, None, "PLA")])
+        self.assertEqual(rows[0]["notes"], "End not observed (listener was not connected). Check the status yourself.")
+        self.assertEqual(rows[1]["notes"], "Kleur klopte niet")             # the user's own note stays
+        self.assertEqual(rows[2]["notes"], "Start not seen live: the listener started during the print, start time "
+                                           "and duration are approximate.\nFilament (slicer): PLA #FFFFFF")
+        self.assertEqual(tasks, ["Clean build plate (water and dish soap)", "Plaat reinigen (eigen manier)"])
 
-    def test_status_filter_has_onbekend(self):
+    def test_status_filter_has_unknown(self):
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("INSERT INTO prints (name, status) VALUES ('a', 'onbekend'), ('b', 'gelukt')")
-        html = self.c.get("/?status=onbekend").get_data(as_text=True)
-        self.assertIn("<option selected>onbekend</option>", html)
+            db.execute("INSERT INTO prints (name, status) VALUES ('a', 'unknown'), ('b', 'succeeded')")
+        html = self.c.get("/?status=unknown").get_data(as_text=True)
+        self.assertIn('<option value="unknown" selected>Unknown</option>', html)
         self.assertIn(">a<", html)
         self.assertNotIn(">b<", html)
-        self.assertIn("onbekend", app.STATUSES)
-        self.assertIn("opnieuw", app.STATUSES)
+        self.assertIn("unknown", app.STATUSES)
+        self.assertIn("reprint", app.STATUSES)
 
     def test_detail_shows_error_text_and_link(self):
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("INSERT INTO prints (name, status, print_error) VALUES ('x', 'mislukt', ?), ('y', 'mislukt', ?)",
+            db.execute("INSERT INTO prints (name, status, print_error) VALUES ('x', 'failed', ?), ('y', 'failed', ?)",
                        (ml.CANCELLED, 0x07008011))
         html = self.c.get("/print/1").get_data(as_text=True)
-        self.assertIn("De taak is geannuleerd.", html)
+        self.assertIn("The task was canceled.", html)
         self.assertIn('href="https://wiki.bambulab.com/en/hms/home"', html)
         html = self.c.get("/print/2").get_data(as_text=True)
-        self.assertIn("AMS filament is op.", html)
+        self.assertIn("AMS filament ran out.", html)
         self.assertIn(">0700-8011</a>", html)
 
     def test_api_live_adds_ams_history(self):
@@ -320,7 +346,7 @@ class AppTest(unittest.TestCase):
             now = datetime.now(TZ).replace(microsecond=0)
             db.executemany("INSERT INTO ams_readings (printer_id, ams_id, humidity_pct, humidity_level, temp, recorded_at) "
                            "VALUES (?, '0', ?, 3, 24.0, ?)",
-                           [(pid, 30.0, (now - timedelta(hours=30)).isoformat()),   # te oud
+                           [(pid, 30.0, (now - timedelta(hours=30)).isoformat()),   # too old
                             (pid, 22.0, (now - timedelta(hours=2)).isoformat()),
                             (pid, 21.0, (now - timedelta(minutes=5)).isoformat())])
         live = {"printers": [{"printer_id": pid, "ams": [{"id": "0"}]}, {"printer_id": 99, "ams": []}]}

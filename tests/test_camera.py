@@ -1,6 +1,6 @@
-"""Tests voor camera.py en het camerabeeld bij het einde van een print (geen netwerk; ffmpeg wordt nagebootst).
+"""Tests for camera.py and the camera image at the end of a print (no network; ffmpeg is faked).
 
-Draaien:  python3 -m unittest discover -s tests
+Run:  python3 -m unittest discover -s tests
 """
 import logging
 import os
@@ -23,7 +23,7 @@ import camera  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
 
 TZ = ZoneInfo("Europe/Brussels")
-CODE = "a/b@c:12"   # met tekens die in een URL gecodeerd worden
+CODE = "a/b@c:12"   # with characters that get encoded in a URL
 
 
 def jpeg(n):
@@ -37,11 +37,11 @@ class HelpersTest(unittest.TestCase):
 
     def test_redact(self):
         url = camera.rtsp_url("192.0.2.10", CODE)
-        for text in (f"{url}: Connection refused", f"fout met {CODE}", "rtsps://bblp:wat-dan-ook@host:322/x"):
+        for text in (f"{url}: Connection refused", f"error with {CODE}", "rtsps://bblp:anything-goes@host:322/x"):
             out = camera.redact(text, CODE)
             self.assertNotIn(CODE, out)
             self.assertNotIn("a%2Fb%40c%3A12", out)
-            self.assertNotIn("wat-dan-ook", out)
+            self.assertNotIn("anything-goes", out)
         self.assertIn("rtsps://bblp:***@192.0.2.10", camera.redact(url))
 
     def test_cmd_has_tcp_and_single_frame(self):
@@ -97,7 +97,7 @@ FAKE_FFMPEG = textwrap.dedent("""\
 
 
 class LiveStreamTest(unittest.TestCase):
-    """Camera met een nagebootste ffmpeg die doorlopend JPEG's schrijft."""
+    """Camera with a fake ffmpeg that keeps writing JPEGs."""
 
     def setUp(self):
         self.bindir = tempfile.mkdtemp()
@@ -126,9 +126,9 @@ class LiveStreamTest(unittest.TestCase):
         while cam.thread is not None and time.monotonic() < deadline:
             time.sleep(0.05)
         self.assertIsNone(cam.thread)
-        self.assertIsNotNone(proc.poll())        # ffmpeg is gestopt
+        self.assertIsNotNone(proc.poll())        # ffmpeg has stopped
         self.assertIsNone(cam.latest())
-        self.assertTrue(next(cam.frames(stall=5)).startswith(camera.SOI))   # en start opnieuw
+        self.assertTrue(next(cam.frames(stall=5)).startswith(camera.SOI))   # and starts again
 
     def test_manager_replaces_on_new_code(self):
         m = camera.CameraManager()
@@ -165,12 +165,12 @@ class EndSnapshotTest(unittest.TestCase):
         t.handle(report("FINISH", "1"))
         t.handle(report("RUNNING", "2"))
         t.handle(report("FAILED", "2"))
-        self.assertEqual(self.calls, [(1, "gelukt"), (2, "mislukt")])
+        self.assertEqual(self.calls, [(1, "succeeded"), (2, "failed")])
 
     def test_not_called_when_end_not_seen_live(self):
         self.tracker().handle(report("RUNNING"))
         self.calls.clear()
-        self.tracker().handle(report("FINISH"))    # listener herstart na het einde
+        self.tracker().handle(report("FINISH"))    # listener restarts after the end
         self.assertEqual(self.calls, [])
 
     def test_snapshotter_error_does_not_break_tracking(self):
@@ -180,7 +180,7 @@ class EndSnapshotTest(unittest.TestCase):
         with self.assertLogs("printvault.mqtt", logging.ERROR):
             t.handle(report("FINISH"))
         with ml.connect_db(app.DB_PATH) as db:
-            self.assertEqual(db.execute("SELECT status FROM prints").fetchone()[0], "gelukt")
+            self.assertEqual(db.execute("SELECT status FROM prints").fetchone()[0], "succeeded")
 
     # ---------- save_snapshot ----------
 
@@ -194,7 +194,7 @@ class EndSnapshotTest(unittest.TestCase):
         return pid, ids
 
     def save(self, pid):
-        return ml.save_snapshot(app.DB_PATH, app.UPLOAD_DIR, pid, jpeg(9), "gelukt", datetime(2026, 11, 22, 15, 30, tzinfo=TZ))
+        return ml.save_snapshot(app.DB_PATH, app.UPLOAD_DIR, pid, jpeg(9), "succeeded", datetime(2026, 11, 22, 15, 30, tzinfo=TZ))
 
     def cover(self, pid):
         with app.app.test_request_context():
@@ -205,7 +205,7 @@ class EndSnapshotTest(unittest.TestCase):
         fid = self.save(pid)
         with ml.connect_db(app.DB_PATH) as db:
             f = db.execute("SELECT * FROM files WHERE id = ?", (fid,)).fetchone()
-        self.assertEqual((f["kind"], f["original_name"], f["size"]), ("photo", "camera-gelukt-20261122-1530.jpg", 14))
+        self.assertEqual((f["kind"], f["original_name"], f["size"]), ("photo", "camera-succeeded-20261122-1530.jpg", 14))
         with open(os.path.join(app.UPLOAD_DIR, f["stored_name"]), "rb") as fh:
             self.assertEqual(fh.read(), jpeg(9))
         self.assertEqual(self.cover(pid), f["stored_name"])
@@ -218,12 +218,12 @@ class EndSnapshotTest(unittest.TestCase):
         self.assertEqual(self.cover(pid), stored)
 
     def test_keeps_earlier_real_photo(self):
-        pid, ids = self.new_print(["thumbnail-plaat-1.png", "eigen.jpg"])
+        pid, ids = self.new_print(["thumbnail-plaat-1.png", "own.jpg"])
         self.save(pid)
         self.assertEqual(self.cover(pid), "s1.jpg")
 
     def test_keeps_chosen_cover(self):
-        pid, ids = self.new_print(["eigen.jpg", "tweede.jpg"], cover_index=1)
+        pid, ids = self.new_print(["own.jpg", "second.jpg"], cover_index=1)
         self.save(pid)
         self.assertEqual(self.cover(pid), "s1.jpg")
 
@@ -235,12 +235,12 @@ class EndSnapshotTest(unittest.TestCase):
     def test_worker_logs_redacted_and_continues(self):
         sup = ml.Supervisor(app.DB_PATH)
         cfg = sup.configs()[self.printer_id]
-        err = camera.CameraError(f"mislukt: {camera.rtsp_url('10.0.0.2', CODE)}")
+        err = camera.CameraError(f"failed: {camera.rtsp_url('10.0.0.2', CODE)}")
         with mock.patch("camera.grab_snapshot", side_effect=err), \
                 self.assertLogs("printvault.mqtt", logging.WARNING) as logs:
-            sup._snapshot_worker(cfg, 1, "gelukt")
+            sup._snapshot_worker(cfg, 1, "succeeded")
         out = "\n".join(logs.output)
-        self.assertIn("camerabeeld bij print 1 mislukt", out)
+        self.assertIn("camera image for print 1 failed", out)
         self.assertNotIn("a%2Fb%40c%3A12", out)
         self.assertNotIn(CODE, out)
 
@@ -254,8 +254,8 @@ class CameraRoutesTest(unittest.TestCase):
         app._snapshots.clear()
         self.c = app.app.test_client()
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("INSERT INTO printers (name, ip, access_code) VALUES ('met', '10.0.0.2', ?)", (CODE,))
-            db.execute("INSERT INTO printers (name) VALUES ('zonder')")
+            db.execute("INSERT INTO printers (name, ip, access_code) VALUES ('with', '10.0.0.2', ?)", (CODE,))
+            db.execute("INSERT INTO printers (name) VALUES ('without')")
 
     def test_404_without_camera_settings(self):
         self.assertEqual(self.c.get("/printers/2/camera.mjpg").status_code, 404)
@@ -277,7 +277,7 @@ class CameraRoutesTest(unittest.TestCase):
             self.assertEqual(grab.call_count, 2)
 
     def test_snapshot_failure_cached_too(self):
-        with mock.patch("camera.grab_snapshot", side_effect=camera.CameraError("weg")) as grab:
+        with mock.patch("camera.grab_snapshot", side_effect=camera.CameraError("gone")) as grab:
             codes = [self.c.get("/printers/1/snapshot.jpg").status_code for _ in range(3)]
         self.assertEqual((codes, grab.call_count), ([502] * 3, 1))
 
@@ -298,26 +298,26 @@ class CameraRoutesTest(unittest.TestCase):
     def test_running_print_card_shows_snapshot(self):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES "
-                       "(1, 'loopt', 'bezig', 1), (2, 'klaar', 'gelukt', 1), (3, 'zonder camera', 'bezig', 2), "
-                       "(4, 'met foto', 'bezig', 1)")
+                       "(1, 'running', 'printing', 1), (2, 'done', 'succeeded', 1), (3, 'no camera', 'printing', 2), "
+                       "(4, 'with photo', 'printing', 1)")
             db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (4, 'photo', 'f.jpg', 'f.jpg')")
-            db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES (5, 'thumb', 'bezig', 1), "
-                       "(6, 'thumb gekozen', 'bezig', 1)")
+            db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES (5, 'thumb', 'printing', 1), "
+                       "(6, 'thumb gekozen', 'printing', 1)")
             db.execute("INSERT INTO files (id, print_id, kind, stored_name, original_name) VALUES "
                        "(50, 5, 'photo', 't5.png', 'thumbnail-plaat-1.png'), (60, 6, 'photo', 't6.png', 'thumbnail-plaat-1.png')")
             db.execute("UPDATE prints SET cover_file_id = 60 WHERE id = 6")
         html = self.c.get("/").get_data(as_text=True)
-        self.assertEqual(html.count('class="livesnap"'), 2)                      # print 1 en 5
-        self.assertIn('data-print="5" data-fallback="/uploads/t5.png"', html)   # thumbnail vervangen, als reserve
-        self.assertIn('src="/uploads/t6.png"', html)                             # zelf gekozen omslag blijft
-        self.assertIn('src="/uploads/f.jpg"', html)                              # eigen foto blijft
+        self.assertEqual(html.count('class="livesnap"'), 2)                      # prints 1 and 5
+        self.assertIn('data-print="5" data-fallback="/uploads/t5.png"', html)   # thumbnail replaced, kept as fallback
+        self.assertIn('src="/uploads/t6.png"', html)                             # a chosen cover stays
+        self.assertIn('src="/uploads/f.jpg"', html)                              # an own photo stays
         self.assertIn('data-printer="1" data-print="1"', html)
         self.assertIn("/printers/1/snapshot.jpg", html)
-        self.assertEqual(html.count('<div class="nothumb">geen foto</div>'), 2)   # klaar + zonder camera
+        self.assertEqual(html.count('<div class="nothumb">no photo</div>'), 2)   # done + no camera
         self.assertNotIn(CODE, html)
 
     def test_snapshot_error_redacted(self):
-        err = camera.CameraError(camera.redact(f"{camera.rtsp_url('10.0.0.2', CODE)} weg", CODE))
+        err = camera.CameraError(camera.redact(f"{camera.rtsp_url('10.0.0.2', CODE)} gone", CODE))
         with mock.patch("camera.grab_snapshot", side_effect=err):
             r = self.c.get("/printers/1/snapshot.jpg")
         self.assertEqual(r.status_code, 502)

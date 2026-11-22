@@ -1,12 +1,12 @@
-"""Camerabeeld van Bambu Lab-printers (RTSPS op poort 322, o.a. X1, P2S, H2D).
+"""Camera image of Bambu Lab printers (RTSPS on port 322, e.g. X1, P2S, H2D).
 
-Browsers kunnen RTSP niet afspelen; ffmpeg zet het beeld om naar losse JPEG's.
-- Camera: één gedeeld ffmpeg-proces per printer dat start bij de eerste kijker en stopt
-  zodra er IDLE_SECONDS niemand meer kijkt (de printer laat maar weinig verbindingen toe).
-- grab_snapshot(): één los beeld, ook bruikbaar vanuit de MQTT-listener.
+Browsers cannot play RTSP; ffmpeg converts the stream into separate JPEGs.
+- Camera: one shared ffmpeg process per printer that starts with the first viewer and stops
+  once nobody has watched for IDLE_SECONDS (the printer only allows a few connections).
+- grab_snapshot(): a single image, also usable from the MQTT listener.
 
-De access code zit in de RTSP-URL en die zet ffmpeg in zijn foutmeldingen;
-alles wat gelogd of getoond wordt, gaat daarom eerst door redact().
+The access code is part of the RTSP URL, and ffmpeg prints that URL in its error messages;
+everything that is logged or shown therefore goes through redact() first.
 """
 import collections
 import logging
@@ -22,8 +22,8 @@ log = logging.getLogger("printvault.camera")
 RTSP_PORT = 322
 FPS = int(os.environ.get("CAMERA_FPS", "5"))
 WIDTH = int(os.environ.get("CAMERA_WIDTH", "1280"))
-IDLE_SECONDS = 15          # zo lang na de laatste kijker blijft de stream nog open
-STALL_SECONDS = 20         # zonder nieuw beeld stopt een kijker-stream
+IDLE_SECONDS = 15          # the stream stays open this long after the last viewer
+STALL_SECONDS = 20         # a viewer stream stops without a new frame for this long
 SNAPSHOT_TIMEOUT = 25
 SOCKET_TIMEOUT_US = 10_000_000
 MAX_FRAME = 8 * 1024 * 1024
@@ -43,7 +43,7 @@ _URL_CRED = re.compile(r"(rtsps?://[^:/@\s]+:)[^@\s]*@", re.I)
 
 
 def redact(text, access_code=None):
-    """Haalt de access code uit tekst (zowel in een URL als los)."""
+    """Removes the access code from text (both inside a URL and on its own)."""
     text = _URL_CRED.sub(r"\1***@", str(text))
     if access_code:
         for s in {access_code, urllib.parse.quote(access_code, safe="")}:
@@ -66,7 +66,7 @@ def ffmpeg_cmd(url, *, fps=None, width=None, single=False):
 
 
 class FrameParser:
-    """Knipt een doorlopende MJPEG-stroom (aaneengeplakte JPEG's) in losse beelden."""
+    """Cuts a continuous MJPEG stream (concatenated JPEGs) into separate frames."""
 
     def __init__(self):
         self.buf = bytearray()
@@ -77,13 +77,13 @@ class FrameParser:
         while True:
             start = self.buf.find(SOI)
             if start < 0:
-                # een 0xFF op het einde kan de eerste helft van de volgende SOI zijn
+                # a 0xFF at the end may be the first half of the next SOI
                 del self.buf[:-1 if self.buf.endswith(b"\xff") else len(self.buf)]
                 break
             end = self.buf.find(EOI, start + 2)
             if end < 0:
                 del self.buf[:start]
-                if len(self.buf) > MAX_FRAME:   # nooit een einde gevonden: weggooien
+                if len(self.buf) > MAX_FRAME:   # never found an end: discard
                     self.buf.clear()
                 break
             frames.append(bytes(self.buf[start:end + 2]))
@@ -92,23 +92,23 @@ class FrameParser:
 
 
 def grab_snapshot(ip, access_code, timeout=SNAPSHOT_TIMEOUT):
-    """Eén JPEG van de printercamera (volle resolutie). Geeft CameraError bij een probleem."""
+    """One JPEG from the printer camera (full resolution). Raises CameraError on a problem."""
     try:
         res = subprocess.run(ffmpeg_cmd(rtsp_url(ip, access_code), single=True),
                              capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
-        raise CameraError("ffmpeg is niet geïnstalleerd.")
+        raise CameraError("ffmpeg is not installed.")
     except subprocess.TimeoutExpired:
-        raise CameraError(f"Geen camerabeeld binnen {timeout} seconden.")
+        raise CameraError(f"No camera image within {timeout} seconds.")
     if res.returncode != 0 or not res.stdout.startswith(SOI):
         msg = res.stderr.decode(errors="replace").strip().splitlines()
-        raise CameraError("Camerabeeld ophalen mislukt: "
-                          + redact(msg[-1] if msg else f"ffmpeg stopte met code {res.returncode}", access_code))
+        raise CameraError("Fetching the camera image failed: "
+                          + redact(msg[-1] if msg else f"ffmpeg exited with code {res.returncode}", access_code))
     return res.stdout
 
 
 class Camera:
-    """Gedeelde live stream van één printer."""
+    """Shared live stream of one printer."""
 
     def __init__(self, ip, access_code, idle=IDLE_SECONDS):
         self.url = rtsp_url(ip, access_code)
@@ -125,10 +125,10 @@ class Camera:
         self.closed = False
         self.error = None
 
-    # ---------- voor kijkers ----------
+    # ---------- for viewers ----------
 
     def frames(self, stall=STALL_SECONDS):
-        """Generator met nieuwe beelden zolang de kijker blijft; stopt na `stall` s zonder beeld."""
+        """Generator of new frames for as long as the viewer stays; stops after `stall` s without a frame."""
         with self.cond:
             self.viewers += 1
             self._touch_and_start()
@@ -149,7 +149,7 @@ class Camera:
                 self.last_used = time.monotonic()
 
     def latest(self, max_age=3.0):
-        """Het laatste beeld als de stream loopt en het beeld vers is, anders None."""
+        """The latest frame if the stream is running and the frame is fresh, else None."""
         with self.cond:
             if self.frame is not None and time.monotonic() - self.frame_at <= max_age:
                 return self.frame
@@ -162,15 +162,15 @@ class Camera:
             proc = self.proc
         _stop(proc)
 
-    # ---------- achtergrond ----------
+    # ---------- background ----------
 
-    def _touch_and_start(self):   # onder self.cond
+    def _touch_and_start(self):   # under self.cond
         self.last_used = time.monotonic()
         if self.thread is None:
             self.thread = threading.Thread(target=self._run, daemon=True, name="camera")
             self.thread.start()
 
-    def _idle(self):              # onder self.cond
+    def _idle(self):              # under self.cond
         return self.closed or (self.viewers == 0 and time.monotonic() - self.last_used > self.idle)
 
     def _run(self):
@@ -195,7 +195,7 @@ class Camera:
             proc = subprocess.Popen(ffmpeg_cmd(self.url), stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except FileNotFoundError:
-            self.error = "ffmpeg is niet geïnstalleerd."
+            self.error = "ffmpeg is not installed."
             log.error("camera: %s", self.error)
             return
         with self.cond:
@@ -230,7 +230,7 @@ class Camera:
         if proc.returncode not in (0, -15, -9) and not self.closed:
             last = errors[-1].decode(errors="replace").strip() if errors else f"code {proc.returncode}"
             self.error = redact(last, self.secret)
-            log.warning("camera: ffmpeg stopte: %s", self.error)
+            log.warning("camera: ffmpeg exited: %s", self.error)
 
 
 def _stop(proc):
@@ -245,7 +245,7 @@ def _stop(proc):
 
 
 class CameraManager:
-    """Eén Camera per printer; een gewijzigd IP of access code geeft een nieuwe."""
+    """One Camera per printer; a changed IP or access code gives a new one."""
 
     def __init__(self):
         self.lock = threading.Lock()

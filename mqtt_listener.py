@@ -1,11 +1,11 @@
-"""MQTT-listener voor Bambu Lab-printers (alleen lezen).
+"""MQTT listener for Bambu Lab printers (read-only).
 
-Verbindt per printer (met IP, serienummer en access code uit de printerinstellingen)
-met mqtts://<ip>:8883, abonneert op device/<serienummer>/report en publiceert nooit iets.
-Volgt print.gcode_state en houdt de prints in de database bij. De live status staat in
-het geheugen en is als JSON beschikbaar op http://<LIVE_HOST>:<LIVE_PORT>/live.
+Connects per printer (with the IP, serial number and access code from the printer settings)
+to mqtts://<ip>:8883, subscribes to device/<serial>/report and never publishes anything.
+Follows print.gcode_state and keeps the prints in the database up to date. The live status is
+kept in memory and served as JSON at http://<LIVE_HOST>:<LIVE_PORT>/live.
 
-Draaien:  python mqtt_listener.py
+Run:  python mqtt_listener.py
 """
 import json
 import re
@@ -26,7 +26,7 @@ import bambu_status
 import camera
 import maintenance
 import notify
-from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code wordt ook door app gebruikt)
+from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code is also used by app)
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
@@ -36,10 +36,10 @@ LIVE_HOST = os.environ.get("LIVE_HOST", "127.0.0.1")
 LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
 RELOAD_SECONDS = int(os.environ.get("MQTT_RELOAD_SECONDS", "60"))
 
-AMS_INTERVAL = timedelta(minutes=10)   # hoogstens één opgeslagen AMS-meting per unit per 10 minuten
-SAMPLE_INTERVAL = timedelta(minutes=1) # tijdreeks per print: hoogstens één punt per minuut (plus bij elke faseovergang)
+AMS_INTERVAL = timedelta(minutes=10)   # at most one stored AMS reading per unit per 10 minutes
+SAMPLE_INTERVAL = timedelta(minutes=1) # time series per print: at most one point per minute (plus one at every stage change)
 ACTIVE = {"PREPARE", "RUNNING", "PAUSE"}
-DONE = {"FINISH": "gelukt", "FAILED": "mislukt"}
+DONE = {"FINISH": "succeeded", "FAILED": "failed"}
 
 log = logging.getLogger("printvault.mqtt")
 
@@ -49,7 +49,7 @@ def now_local():
 
 
 def deep_merge(dst, src):
-    """Voegt een (eventueel gedeeltelijk) statusbericht samen met de bekende status."""
+    """Merges a (possibly partial) status message into the known status."""
     for k, v in src.items():
         if isinstance(v, dict) and isinstance(dst.get(k), dict):
             deep_merge(dst[k], v)
@@ -70,7 +70,7 @@ def ams_slots(state):
 
 
 def _num(value, cast=float):
-    """'24.6' → 24.6; leeg, ongeldig of exact 0 (sensor ontbreekt of nog geen meting) → None."""
+    """'24.6' → 24.6; empty, invalid or exactly 0 (sensor missing or no reading yet) → None."""
     try:
         v = cast(float(value))
     except (TypeError, ValueError):
@@ -79,8 +79,8 @@ def _num(value, cast=float):
 
 
 def ams_units(state):
-    """Vochtigheid en temperatuur per AMS-unit. humidity_pct (humidity_raw) sturen alleen nieuwere
-    firmwareversies; humidity_level is Bambu's niveau 1–5."""
+    """Humidity and temperature per AMS unit. Only newer firmware sends humidity_pct (humidity_raw);
+    humidity_level is Bambu's level 1–5."""
     units = []
     for unit in (state.get("ams") or {}).get("ams") or []:
         if not isinstance(unit, dict) or unit.get("id") is None:
@@ -94,7 +94,7 @@ def ams_units(state):
 
 @contextmanager
 def connect_db(db_path):
-    """Verbinding die bij succes commit en altijd gesloten wordt."""
+    """Connection that commits on success and is always closed."""
     db = sqlite3.connect(db_path, timeout=30)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
@@ -106,27 +106,27 @@ def connect_db(db_path):
 
 
 class PrinterTracker:
-    """Volgt de status van één printer. Losstaand van MQTT zodat het testbaar is."""
+    """Follows the status of one printer. Independent of MQTT so that it can be tested."""
 
     def __init__(self, printer_id, printer_name, db_path, clock=now_local, notifier=None):
         self.printer_id = printer_id
-        self.notifier = notifier  # callable(kind, title, message, tags, priority) of None
-        self.snapshotter = None   # callable(print_id, status): camerabeeld bij het einde, of None
+        self.notifier = notifier  # callable(kind, title, message, tags, priority) or None
+        self.snapshotter = None   # callable(print_id, status): camera image at the end, or None
         self.printer_name = printer_name
         self.db_path = db_path
         self.clock = clock
         self.state = {}
-        self.gcode_state = None   # laatst geziene gcode_state (None = nog niets ontvangen)
-        self.print_id = None      # het 'bezig'-record dat we volgen
+        self.gcode_state = None   # last seen gcode_state (None = nothing received yet)
+        self.print_id = None      # the 'printing' record we are following
         self.task_id = None
         self.connected = False
         self.last_message = None
-        self.ams_saved = {}       # ams_id -> tijdstip van de laatst opgeslagen meting
-        self.settings_saved = (None, frozenset())   # (print_id, velden die al naar het printrecord gingen)
-        self.last_sample = (None, None, None)       # (print_id, tijdstip, fase) van het laatste meetpunt
+        self.ams_saved = {}       # ams_id -> time of the last stored reading
+        self.settings_saved = (None, frozenset())   # (print_id, fields already written to the print record)
+        self.last_sample = (None, None, None)       # (print_id, time, stage) of the last data point
         self.lock = threading.Lock()
 
-    # ---------- berichten ----------
+    # ---------- messages ----------
 
     def handle(self, payload):
         report = payload.get("print")
@@ -143,7 +143,7 @@ class PrinterTracker:
                 log.info("printer %s: %s -> %s", self.printer_id, prev, new)
                 self._transition(prev, new, task)
             elif new in ACTIVE and self.print_id and task and self.task_id and task != self.task_id:
-                # Nieuwe opdracht zonder dat we het einde van de vorige zagen (bv. tijdens een verbindingsonderbreking).
+                # New job without having seen the previous one end (e.g. during a connection outage).
                 self._close_stale(self.print_id)
                 self.print_id = None
                 self._start(task, first_seen=False)
@@ -158,11 +158,11 @@ class PrinterTracker:
         elif new in DONE:
             target = self.print_id
             if target is None and prev is None:
-                # Listener start terwijl de print al klaar is: open record van deze opdracht afsluiten.
+                # Listener starts while the print has already ended: close this job's open record.
                 target = self._find_running(task)
             if target is not None:
                 if target == self.print_id:
-                    self._record_sample(target, force=True)   # laatste punt: het einde
+                    self._record_sample(target, force=True)   # last point: the end
                 self._finish(target, DONE[new], seen_live=prev is not None)
             self.print_id = None
             self.task_id = None
@@ -170,9 +170,9 @@ class PrinterTracker:
     # ---------- database ----------
 
     def _find_running(self, task):
-        """Zoekt het 'bezig'-record van deze printer. Een record van een andere opdracht wordt afgesloten."""
+        """Finds this printer's 'printing' record. A record of another job is closed."""
         with connect_db(self.db_path) as db:
-            rows = db.execute("SELECT id, task_id FROM prints WHERE printer_id = ? AND status = 'bezig' "
+            rows = db.execute("SELECT id, task_id FROM prints WHERE printer_id = ? AND status = 'printing' "
                               "ORDER BY id DESC", (self.printer_id,)).fetchall()
         match = None
         for r in rows:
@@ -185,27 +185,27 @@ class PrinterTracker:
     def _start(self, task, first_seen):
         existing = self._find_running(task)
         now = self.clock()
-        name = (self.state.get("subtask_name") or "").strip()[:200] or "Naamloze print"
+        name = (self.state.get("subtask_name") or "").strip()[:200] or "Untitled print"
         with connect_db(self.db_path) as db:
             if existing is not None:
                 self.print_id = existing
                 db.execute("UPDATE prints SET task_id = COALESCE(task_id, ?) WHERE id = ?", (task, existing))
-                log.info("printer %s: hervat print %s", self.printer_id, existing)
+                log.info("printer %s: resuming print %s", self.printer_id, existing)
             else:
-                notes = ("Start niet live gezien: listener startte tijdens de print, starttijd en duur zijn bij benadering."
+                notes = ("Start not seen live: the listener started during the print, start time and duration are approximate."
                          if first_seen and self.state.get("gcode_state") != "PREPARE" else "")
                 cur = db.execute(
                     "INSERT INTO prints (name, status, printer_id, printed_on, started_at, task_id, source, notes) "
-                    "VALUES (?, 'bezig', ?, ?, ?, ?, 'mqtt', ?)",
+                    "VALUES (?, 'printing', ?, ?, ?, ?, 'mqtt', ?)",
                     (name, self.printer_id, now.date().isoformat(), now.isoformat(), task, notes))
                 self.print_id = cur.lastrowid
-                log.info("printer %s: nieuwe print %s (%s)", self.printer_id, self.print_id, name)
+                log.info("printer %s: new print %s (%s)", self.printer_id, self.print_id, name)
             self._save_ams(db, self.print_id)
         self.task_id = task
 
     def _finish(self, print_id, status, seen_live=True):
         now = self.clock()
-        err = self.state.get("print_error") if status == "mislukt" else None
+        err = self.state.get("print_error") if status == "failed" else None
         with connect_db(self.db_path) as db:
             row = db.execute("SELECT name, started_at, notes FROM prints WHERE id = ?", (print_id,)).fetchone()
             if row is None:
@@ -219,10 +219,10 @@ class PrinterTracker:
                     pass
             notes = row["notes"] or ""
             if not seen_live:
-                extra = "Einde niet live gezien: eindtijd is het moment waarop de listener startte."
+                extra = "End not seen live: the end time is when the listener started."
                 notes = f"{notes}\n{extra}".strip()
             fail_note = fail_reason = None
-            if status == "mislukt":
+            if status == "failed":
                 fail_note, fail_reason = self._fail_info(err)
             db.execute(
                 "UPDATE prints SET status = ?, finished_at = ?, print_time_min = ?, print_error = ?, "
@@ -231,7 +231,7 @@ class PrinterTracker:
                 (status, now.isoformat(), minutes, int(err) if err else None, fail_note, fail_reason, notes, print_id))
             self._save_ams(db, print_id)
         log.info("printer %s: print %s %s", self.printer_id, print_id, status)
-        if seen_live:   # geen melding of foto voor een einde dat pas na een herstart opgemerkt wordt
+        if seen_live:   # no notification or photo for an end only noticed after a restart
             self._notify(row["name"], status, minutes, fail_note)
             self._snapshot(print_id, status)
 
@@ -241,37 +241,37 @@ class PrinterTracker:
         try:
             self.snapshotter(print_id, status)
         except Exception:
-            log.exception("printer %s: camerabeeld starten mislukt", self.printer_id)
+            log.exception("printer %s: starting the camera snapshot failed", self.printer_id)
 
     def _notify(self, name, status, minutes, fail_note):
         if self.notifier is None:
             return
         try:
-            if status == "gelukt":
-                took = f" · {minutes // 60}u {minutes % 60:02d}m" if minutes is not None else ""
-                self.notifier("finish", f"Print klaar: {name}", f"{self.printer_name}{took}",
+            if status == "succeeded":
+                took = f" · {minutes // 60}h {minutes % 60:02d}m" if minutes is not None else ""
+                self.notifier("finish", f"Print finished: {name}", f"{self.printer_name}{took}",
                               tags=["white_check_mark"])
             else:
-                self.notifier("failed", f"Print mislukt: {name}",
-                              f"{self.printer_name}\n{fail_note or 'Geen foutcode van de printer.'}",
+                self.notifier("failed", f"Print failed: {name}",
+                              f"{self.printer_name}\n{fail_note or 'No error code from the printer.'}",
                               tags=["x"], priority=4)
         except Exception:
-            log.exception("printer %s: melding versturen mislukt", self.printer_id)
+            log.exception("printer %s: sending the notification failed", self.printer_id)
 
     def _fail_info(self, err):
-        """(toelichting, voorgestelde faalreden) voor een mislukte print, uit print_error en actieve HMS."""
+        """(explanation, suggested fail reason) for a failed print, from print_error and active HMS."""
         hms = bambu_errors.describe_hms_list(self.state.get("hms"))
         lines = []
         d = bambu_errors.describe_print_error(err)
         if d and int(err) == CANCELLED:
-            lines.append("Geannuleerd op de printer.")
+            lines.append("Cancelled on the printer.")
         elif d:
-            lines.append(f"Printerfout {d['code']}: {d['text']}" if d["text"] else f"Printerfout {d['code']}")
+            lines.append(f"Printer error {d['code']}: {d['text']}" if d["text"] else f"Printer error {d['code']}")
         lines += [f"HMS {bambu_errors.label(h)}" for h in hms]
         return ("\n".join(lines) or None), bambu_errors.suggest_fail_reason(err, hms)
 
-    # Velden die bij de start in het printrecord komen, maar enkel als ze nog leeg zijn.
-    # Komen ze pas later binnen (bv. het volledige rapport na een herstart), dan alsnog.
+    # Fields written to the print record at the start, but only while they are still empty.
+    # If they only arrive later (e.g. the full report after a restart), they are filled in then.
     SETTINGS_COLUMNS = ("nozzle", "nozzle_type", "plate_type", "plate", "plate_count", "speed_profile",
                         "spaghetti_detection", "first_layer_inspection")
 
@@ -290,7 +290,7 @@ class PrinterTracker:
         now = self.clock()
         point = bambu_status.sample(self.state)
         last_id, last_at, last_stage = self.last_sample
-        if last_id != print_id:   # (her)start: laatste punt van deze print uit de database
+        if last_id != print_id:   # (re)start: this print's last point from the database
             with connect_db(self.db_path) as db:
                 row = db.execute("SELECT recorded_at, stage FROM print_samples WHERE print_id = ? "
                                  "ORDER BY recorded_at DESC LIMIT 1", (print_id,)).fetchone()
@@ -306,18 +306,18 @@ class PrinterTracker:
         self.last_sample = (print_id, now, point["stage"])
 
     def _close_stale(self, print_id):
-        note = "Einde niet waargenomen (listener was niet verbonden). Controleer de status zelf."
+        note = "End not observed (listener was not connected). Check the status yourself."
         with connect_db(self.db_path) as db:
-            db.execute("UPDATE prints SET status = 'onbekend', "
-                       "notes = TRIM(COALESCE(notes, '') || char(10) || ?) WHERE id = ? AND status = 'bezig'",
+            db.execute("UPDATE prints SET status = 'unknown', "
+                       "notes = TRIM(COALESCE(notes, '') || char(10) || ?) WHERE id = ? AND status = 'printing'",
                        (note, print_id))
-        log.warning("printer %s: print %s had geen einde, gemarkeerd als 'onbekend'", self.printer_id, print_id)
+        log.warning("printer %s: print %s had no end, marked as 'unknown'", self.printer_id, print_id)
 
     def _record_ams(self):
         units = ams_units(self.state)
         now = self.clock()
         unknown = [u["id"] for u in units if u["id"] not in self.ams_saved]
-        if unknown:   # eerste bericht na een (her)start: laatste meting per unit uit de database
+        if unknown:   # first message after a (re)start: last reading per unit from the database
             with connect_db(self.db_path) as db:
                 for ams_id in unknown:
                     row = db.execute("SELECT MAX(recorded_at) FROM ams_readings WHERE printer_id = ? AND ams_id = ?",
@@ -381,8 +381,8 @@ class PrinterTracker:
 
 
 def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
-    """Hangt een camerabeeld als foto aan de print. De omslag volgt COVER_SQL in app.py: een gekozen
-    omslag of een eerdere echte foto blijft, maar het camerabeeld gaat voor op een slicer-/MakerWorld-thumbnail."""
+    """Attaches a camera image to the print as a photo. The cover follows COVER_SQL in app.py: a chosen
+    cover or an earlier real photo stays, but the camera image beats a slicer/MakerWorld thumbnail."""
     stored = f"{uuid.uuid4().hex}.jpg"
     name = f"camera-{status}-{when:%Y%m%d-%H%M}.jpg"
     path = os.path.join(upload_dir, stored)
@@ -392,7 +392,7 @@ def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
     try:
         with connect_db(db_path) as db:
             if db.execute("SELECT 1 FROM prints WHERE id = ?", (print_id,)).fetchone() is None:
-                raise LookupError(f"print {print_id} bestaat niet meer")
+                raise LookupError(f"print {print_id} no longer exists")
             file_id = db.execute(
                 "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?, 'photo', ?, ?, ?)",
                 (print_id, stored, name, len(jpeg))).lastrowid
@@ -403,7 +403,7 @@ def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
 
 
 class PrinterConnection:
-    """Eén MQTT-verbinding (alleen subscribe) met automatisch herverbinden door paho."""
+    """One MQTT connection (subscribe only) with automatic reconnects by paho."""
 
     def __init__(self, cfg, tracker):
         import paho.mqtt.client as mqtt
@@ -414,7 +414,7 @@ class PrinterConnection:
         c.username_pw_set("bblp", cfg["access_code"])
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE   # de printer gebruikt een zelfondertekend certificaat
+        ctx.verify_mode = ssl.CERT_NONE   # the printer uses a self-signed certificate
         c.tls_set_context(ctx)
         c.reconnect_delay_set(min_delay=2, max_delay=60)
         c.on_connect = self._on_connect
@@ -423,7 +423,7 @@ class PrinterConnection:
         self.client = c
 
     def start(self):
-        log.info("printer %s: verbinden met %s:8883", self.cfg["id"], self.cfg["ip"])
+        log.info("printer %s: connecting to %s:8883", self.cfg["id"], self.cfg["ip"])
         self.client.connect_async(self.cfg["ip"], 8883, keepalive=60)
         self.client.loop_start()
 
@@ -434,15 +434,15 @@ class PrinterConnection:
 
     def _on_connect(self, client, _u, _flags, reason, _props=None):
         if reason.is_failure:
-            log.warning("printer %s: verbinding geweigerd (%s)", self.cfg["id"], reason)
+            log.warning("printer %s: connection refused (%s)", self.cfg["id"], reason)
             return
-        log.info("printer %s: verbonden", self.cfg["id"])
+        log.info("printer %s: connected", self.cfg["id"])
         self.tracker.connected = True
         client.subscribe(self.topic, qos=0)
 
     def _on_disconnect(self, _c, _u, _flags, reason, _props=None):
         self.tracker.connected = False
-        log.warning("printer %s: verbinding verbroken (%s), opnieuw proberen…", self.cfg["id"], reason)
+        log.warning("printer %s: connection lost (%s), retrying…", self.cfg["id"], reason)
 
     def _on_message(self, _c, _u, msg):
         try:
@@ -452,17 +452,17 @@ class PrinterConnection:
         try:
             self.tracker.handle(payload)
         except Exception:
-            log.exception("printer %s: fout bij verwerken bericht", self.cfg["id"])
+            log.exception("printer %s: error while processing a message", self.cfg["id"])
 
 
 class Supervisor:
-    """Leest periodiek de printerinstellingen en start/stopt verbindingen."""
+    """Periodically reads the printer settings and starts/stops connections."""
 
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
         self.notifier = notify.Notifier(db_path)
-        self.connections = {}   # printer_id -> (config-sleutel, PrinterConnection)
-        self.cfgs = {}          # printer_id -> laatst gelezen instellingen
+        self.connections = {}   # printer_id -> (config key, PrinterConnection)
+        self.cfgs = {}          # printer_id -> last read settings
         self.trackers = {}      # printer_id -> PrinterTracker
 
     def configs(self):
@@ -498,7 +498,7 @@ class Supervisor:
         return [t.live() for t in list(self.trackers.values())]
 
     def take_snapshot(self, printer_id, print_id, status):
-        """Camerabeeld op de achtergrond, zodat de MQTT-verwerking niet wacht."""
+        """Camera image in the background, so MQTT processing does not wait."""
         cfg = self.cfgs.get(printer_id)
         if cfg is None:
             return
@@ -509,9 +509,9 @@ class Supervisor:
         try:
             jpeg = camera.grab_snapshot(cfg["ip"], cfg["access_code"])
             file_id = save_snapshot(self.db_path, UPLOAD_DIR, print_id, jpeg, status, now_local())
-            log.info("printer %s: camerabeeld bij print %s opgeslagen (bestand %s)", cfg["id"], print_id, file_id)
+            log.info("printer %s: camera image for print %s saved (file %s)", cfg["id"], print_id, file_id)
         except Exception as e:
-            log.warning("printer %s: camerabeeld bij print %s mislukt: %s",
+            log.warning("printer %s: camera image for print %s failed: %s",
                         cfg["id"], print_id, camera.redact(e, cfg["access_code"]))
 
     def run(self):
@@ -519,11 +519,11 @@ class Supervisor:
             try:
                 self.sync()
             except Exception:
-                log.exception("printerinstellingen lezen mislukt")
+                log.exception("reading the printer settings failed")
             try:
                 maintenance.check_and_notify(self.db_path, self.notifier)
             except Exception:
-                log.exception("onderhoud controleren mislukt")
+                log.exception("checking maintenance failed")
             time.sleep(RELOAD_SECONDS)
 
 
@@ -545,13 +545,13 @@ def serve_live(supervisor, host=LIVE_HOST, port=LIVE_PORT):
 
     server = ThreadingHTTPServer((host, port), Handler)
     threading.Thread(target=server.serve_forever, daemon=True, name="live-http").start()
-    log.info("live status op http://%s:%d/live", host, port)
+    log.info("live status at http://%s:%d/live", host, port)
     return server
 
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    from app import init_db   # zorgt dat de tabellen/kolommen bestaan
+    from app import init_db   # makes sure the tables/columns exist
     init_db()
     sup = Supervisor()
     serve_live(sup)

@@ -1,26 +1,26 @@
 {% extends "base.html" %}
-{% block title %}Bewerk onderhoud · Printvault{% endblock %}
+{% block title %}Edit maintenance · Printvault{% endblock %}
 {% block content %}
 <div class="head">
   <h1>{{ t.name }} <span class="sub">· {{ pr.name }}</span></h1>
   <details class="confirm">
-    <summary class="btn danger">Verwijder</summary>
+    <summary class="btn danger">Delete</summary>
     <form method="post" action="{{ url_for('delete_maintenance', task_id=t.id) }}">
-      <p>Deze onderhoudstaak verwijderen?</p>
-      <button class="btn danger">Ja, verwijder</button>
+      <p>Delete this maintenance task?</p>
+      <button class="btn danger">Yes, delete</button>
     </form>
   </details>
 </div>
 <form class="form" method="post">
-  <label class="wide">Naam *<input name="name" value="{{ t.name }}" required></label>
-  <label>Elke … printuren<input name="interval_hours" inputmode="decimal" value="{{ '%g'|format(t.interval_hours) if t.interval_hours else '' }}"></label>
-  <label>Elke … dagen<input name="interval_days" inputmode="numeric" value="{{ t.interval_days or '' }}"></label>
-  <label>Laatst uitgevoerd<input type="datetime-local" name="last_done_at" value="{{ t.last_done_at|localinput }}"></label>
-  <label class="wide">Notities<input name="notes" value="{{ t.notes or '' }}"></label>
-  <p class="wide meta">Vul printuren, dagen of allebei in; de taak vervalt bij wat het eerst bereikt wordt.</p>
+  <label class="wide">Name *<input name="name" value="{{ t.name }}" required></label>
+  <label>Every … print hours<input name="interval_hours" inputmode="decimal" value="{{ '%g'|format(t.interval_hours) if t.interval_hours else '' }}"></label>
+  <label>Every … days<input name="interval_days" inputmode="numeric" value="{{ t.interval_days or '' }}"></label>
+  <label>Last done<input type="datetime-local" name="last_done_at" value="{{ t.last_done_at|localinput }}"></label>
+  <label class="wide">Notes<input name="notes" value="{{ t.notes or '' }}"></label>
+  <p class="wide meta">Fill in print hours, days or both; the task becomes due at whichever is reached first.</p>
   <div class="actions wide">
-    <button class="btn primary">Opslaan</button>
-    <a class="btn ghost" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">Annuleer</a>
+    <button class="btn primary">Save</button>
+    <a class="btn ghost" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">Cancel</a>
   </div>
 </form>
 {% endblock %}

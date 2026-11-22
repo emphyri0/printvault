@@ -1,7 +1,7 @@
-"""Meldingen via ntfy (https://ntfy.sh of een eigen ntfy-server).
+"""Notifications via ntfy (https://ntfy.sh or a self-hosted ntfy server).
 
-De instellingen staan in de tabel `settings` en zijn in de app aan te passen (Instellingen).
-Er wordt gepubliceerd als JSON naar de basis-URL van de server, met het topic in de body.
+The settings live in the `settings` table and can be changed in the app (Settings).
+Messages are published as JSON to the server's base URL, with the topic in the body.
 """
 import json
 import logging
@@ -14,7 +14,7 @@ from contextlib import closing
 
 log = logging.getLogger("printvault.notify")
 
-# soort melding -> instelling die hem aan/uit zet
+# kind of notification -> setting that turns it on/off
 KINDS = {"finish": "notify_finish", "failed": "notify_failed", "maintenance": "notify_maintenance"}
 SETTING_KEYS = ("ntfy_url", "ntfy_topic", "ntfy_token", *KINDS.values())
 TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -43,9 +43,9 @@ def enabled(cfg, kind):
 
 
 def post(cfg, title, message, tags=(), priority=None, urlopen=None, timeout=10):
-    """Verstuurt één melding. Geeft een NotifyError bij een fout."""
+    """Sends one notification. Raises NotifyError on failure."""
     if not configured(cfg):
-        raise NotifyError("ntfy is niet ingesteld (URL en topic zijn nodig).")
+        raise NotifyError("ntfy is not set up (a URL and a topic are required).")
     body = {"topic": cfg["ntfy_topic"], "title": title[:250], "message": message[:4000]}
     if tags:
         body["tags"] = list(tags)
@@ -59,14 +59,14 @@ def post(cfg, title, message, tags=(), priority=None, urlopen=None, timeout=10):
         with (urlopen or urllib.request.urlopen)(req, timeout=timeout) as resp:
             resp.read(4096)
     except urllib.error.HTTPError as e:
-        raise NotifyError(f"ntfy-melding versturen mislukt: HTTP {e.code}{_reason(e)}") from None
+        raise NotifyError(f"Sending the ntfy notification failed: HTTP {e.code}{_reason(e)}") from None
     except Exception as e:   # URLError, timeout, …
-        raise NotifyError(f"ntfy-melding versturen mislukt: {e}") from None
+        raise NotifyError(f"Sending the ntfy notification failed: {e}") from None
 
 
 def _reason(err):
-    """De foutreden uit het antwoord van de server. ntfy antwoordt met JSON zoals
-    {"code": 40009, "http": 400, "error": "…"}; een andere server met tekst of HTML."""
+    """The error reason from the server's response. ntfy answers with JSON such as
+    {"code": 40009, "http": 400, "error": "…"}; another server with text or HTML."""
     try:
         body = err.read(2048).decode("utf-8", "replace").strip()
     except Exception:
@@ -74,17 +74,17 @@ def _reason(err):
     try:
         data = json.loads(body)
         if isinstance(data, dict) and data.get("error"):
-            code = f" (ntfy-code {data['code']})" if data.get("code") else ""
+            code = f" (ntfy code {data['code']})" if data.get("code") else ""
             return f": {str(data['error'])[:300]}{code}"
     except ValueError:
         pass
     text = " ".join(body.split())[:200]
-    return f": {text} — antwoordt hier wel een ntfy-server?" if text else f" {err.reason}"
+    return f": {text} — is this really an ntfy server?" if text else f" {err.reason}"
 
 
 class Notifier:
-    """Leest bij elke melding de actuele instellingen en verstuurt (standaard op de achtergrond),
-    zodat een trage of onbereikbare ntfy-server de listener niet ophoudt."""
+    """Reads the current settings for every notification and sends it (in the background by default),
+    so that a slow or unreachable ntfy server does not hold up the listener."""
 
     def __init__(self, db_path, urlopen=None, background=True):
         self.db_path = db_path
@@ -109,6 +109,6 @@ class Notifier:
     def _send(self, cfg, title, message, tags, priority):
         try:
             post(cfg, title, message, tags, priority, urlopen=self.urlopen)
-            log.info("ntfy-melding verstuurd: %s", title)
+            log.info("ntfy notification sent: %s", title)
         except NotifyError as e:
             log.warning("%s", e)

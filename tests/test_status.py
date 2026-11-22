@@ -1,5 +1,5 @@
-"""Tests voor bambu_status en de uitbreidingen van de listener (velden bij de start, tijdreeks),
-met een echt P2S-rapport (geanonimiseerd) in tests/fixtures/p2s_report.json.
+"""Tests for bambu_status and the listener extensions (fields at the start, time series),
+using a real P2S report (anonymised) in tests/fixtures/p2s_report.json.
 """
 import copy
 import json
@@ -43,26 +43,28 @@ class StatusTest(unittest.TestCase):
         self.assertEqual(bs.temperatures({"chamber_temper": 31.5})["chamber"], (31.5, None))   # X1
 
     def test_phase(self):
-        self.assertEqual(bs.phase(state()), (0, "Printen"))
-        self.assertEqual(bs.phase(state(stg_cur=54, gcode_state="PREPARE")), (54, "Wachten op bedtemperatuur"))
-        self.assertEqual(bs.phase(state(stg_cur=16, gcode_state="PAUSE")), (16, "Gepauzeerd door gebruiker"))
-        self.assertEqual(bs.phase(state(stg_cur=0, gcode_state="PAUSE")), (0, "Gepauzeerd"))
-        self.assertEqual(bs.phase(state(stg_cur=255, gcode_state="FINISH")), (None, "Klaar"))
-        self.assertEqual(bs.phase(state(stg_cur=-1, gcode_state="IDLE")), (None, "Inactief"))
-        self.assertEqual(bs.stage_text(60), bs.STAGES[60]["nl"])     # uit de bron
-        self.assertEqual(bs.stage_text(999), "Fase 999")
-        self.assertEqual(bs.stage_group(2), "opwarmen")
-        self.assertEqual(bs.stage_group(0), "printen")
-        self.assertEqual(bs.stage_group(13), "voorbereiden")
-        for code in REPORT["print"]["stg"]:   # alle fasen die de P2S voor deze print plande hebben tekst
-            self.assertNotIn("Fase", bs.stage_text(code))
+        self.assertEqual(bs.phase(state()), (0, "Printing"))
+        self.assertEqual(bs.phase(state(stg_cur=54, gcode_state="PREPARE")), (54, "Waiting for bed temperature"))
+        self.assertEqual(bs.phase(state(stg_cur=16, gcode_state="PAUSE")), (16, "Paused by user"))
+        self.assertEqual(bs.phase(state(stg_cur=0, gcode_state="PAUSE")), (0, "Paused"))
+        self.assertEqual(bs.phase(state(stg_cur=255, gcode_state="FINISH")), (None, "Finished"))
+        self.assertEqual(bs.phase(state(stg_cur=-1, gcode_state="IDLE")), (None, "Idle"))
+        self.assertEqual(bs.stage_text(60), bs.STAGES[60]["text"])   # from the source
+        self.assertEqual(bs.stage_text(3), "Vibration compensation")  # own wording beats the source
+        self.assertEqual(bs.stage_text(999), "Stage 999")
+        self.assertEqual(bs.stage_group(2), "heating")
+        self.assertEqual(bs.stage_group(0), "printing")
+        self.assertEqual(bs.stage_group(13), "preparing")
+        for code in REPORT["print"]["stg"]:   # every stage the P2S planned for this print has a text
+            self.assertNotIn("Stage", bs.stage_text(code))
 
     def test_fans_and_speed(self):
-        self.assertEqual(bs.fans(state()), {"onderdeel": 100, "aux": 90, "kamer": 90, "heatbreak": 100})
+        self.assertEqual(bs.fans(state()), {"part": 100, "aux": 90, "chamber": 90, "heatbreak": 100})
         self.assertEqual(bs.fan_percent("0"), 0)
         self.assertEqual(bs.fan_percent("7"), 50)
-        self.assertEqual(bs.speed(state()), {"level": 2, "name": "Standaard", "percent": 100})
-        self.assertEqual(bs.speed(state(spd_lvl=4, spd_mag=166))["name"], "Ludicrous")
+        self.assertEqual(bs.speed(state()), {"level": 2, "value": "standard", "name": "Standard", "percent": 100})
+        self.assertEqual(bs.speed(state(spd_lvl=4, spd_mag=166))["value"], "ludicrous")
+        self.assertEqual(bs.speed(state(spd_lvl=9))["name"], "Profile 9")
         self.assertIsNone(bs.speed({}))
 
     def test_active_tray(self):
@@ -72,21 +74,21 @@ class StatusTest(unittest.TestCase):
         s["ams"]["tray_now"] = "255"
         self.assertIsNone(bs.active_tray(s))
         s["ams"]["tray_now"] = "254"
-        self.assertEqual(bs.active_tray(s)["label"], "Externe spoel")
+        self.assertEqual(bs.active_tray(s)["label"], "External spool")
         self.assertIsNone(bs.active_tray({}))
 
     def test_nozzle_type_names(self):
-        self.assertEqual(bs.nozzle_type_name("HS01"), "gehard staal")
-        self.assertEqual(bs.nozzle_type_name("HH01"), "gehard staal, high-flow")
-        self.assertEqual(bs.nozzle_type_name("HS00"), "roestvrij staal")
+        self.assertEqual(bs.nozzle_type_name("HS01"), "hardened steel")
+        self.assertEqual(bs.nozzle_type_name("HH01"), "hardened steel, high-flow")
+        self.assertEqual(bs.nozzle_type_name("HS00"), "stainless steel")
         self.assertEqual(bs.nozzle_type_name("HU01"), "TPU high-flow")
         self.assertIsNone(bs.nozzle_type_name("HSxx"))
         self.assertIsNone(bs.nozzle_type_name(""))
 
     def test_print_settings(self):
         self.assertEqual(bs.print_settings(state()), {
-            "nozzle": 0.4, "nozzle_type": "Gehard staal (HS01)", "plate_type": "P0101", "plate": 1, "plate_count": 2,
-            "speed_profile": "Standaard", "spaghetti_detection": 1, "first_layer_inspection": 1})
+            "nozzle": 0.4, "nozzle_type": "Hardened steel (HS01)", "plate_type": "P0101", "plate": 1, "plate_count": 2,
+            "speed_profile": "standard", "spaghetti_detection": 1, "first_layer_inspection": 1})
         self.assertEqual(bs.print_settings({"gcode_state": "RUNNING"}), {})
 
 
@@ -130,46 +132,46 @@ class ListenerTest(unittest.TestCase):
         p = self.row()
         self.assertEqual((p["nozzle"], p["nozzle_type"], p["plate_type"], p["plate"], p["plate_count"],
                           p["speed_profile"], p["spaghetti_detection"], p["first_layer_inspection"]),
-                         (0.4, "Gehard staal (HS01)", "P0101", 1, 2, "Standaard", 1, 1))
+                         (0.4, "Hardened steel (HS01)", "P0101", 1, 2, "standard", 1, 1))
 
     def test_settings_do_not_overwrite_own_values(self):
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO prints (id, name, status, printer_id, task_id, nozzle, plate_type, speed_profile, "
-                       "spaghetti_detection) VALUES (1, 'eigen', 'bezig', ?, '1001', 0.6, 'Textured PEI Plate', 'Sport', 0)",
+                       "spaghetti_detection) VALUES (1, 'own', 'printing', ?, '1001', 0.6, 'Textured PEI Plate', 'sport', 0)",
                        (self.printer_id,))
-        self.tracker().handle(msg())     # listener (her)start tijdens de print: hervat
+        self.tracker().handle(msg())     # listener (re)starts during the print: resumes
         p = self.row()
         self.assertEqual((p["nozzle"], p["plate_type"], p["speed_profile"], p["spaghetti_detection"]),
-                         (0.6, "Textured PEI Plate", "Sport", 0))
-        self.assertEqual((p["nozzle_type"], p["plate_count"], p["first_layer_inspection"]), ("Gehard staal (HS01)", 2, 1))
+                         (0.6, "Textured PEI Plate", "sport", 0))
+        self.assertEqual((p["nozzle_type"], p["plate_count"], p["first_layer_inspection"]), ("Hardened steel (HS01)", 2, 1))
 
     def test_settings_arriving_later_are_filled(self):
         t = self.tracker()
         t.handle({"print": {"gcode_state": "RUNNING", "task_id": "1001", "subtask_name": "x", "stg_cur": 0}})
         self.assertIsNone(self.row()["nozzle_type"])
-        t.handle(msg())                  # volledig rapport komt pas later
-        self.assertEqual(self.row()["nozzle_type"], "Gehard staal (HS01)")
-        with ml.connect_db(app.DB_PATH) as db:   # zelf aangepast tijdens de print: blijft
-            db.execute("UPDATE prints SET nozzle_type = 'eigen'")
+        t.handle(msg())                  # the full report only arrives later
+        self.assertEqual(self.row()["nozzle_type"], "Hardened steel (HS01)")
+        with ml.connect_db(app.DB_PATH) as db:   # changed by the user during the print: stays
+            db.execute("UPDATE prints SET nozzle_type = 'own'")
         t.handle(msg(nozzle_type="HH01"))
-        self.assertEqual(self.row()["nozzle_type"], "eigen")
+        self.assertEqual(self.row()["nozzle_type"], "own")
 
     def test_samples_max_one_per_minute_plus_phase_changes(self):
         t = self.tracker()
         t.handle(msg(gcode_state="PREPARE", stg_cur=2, bed_temper=30.0))
-        for _ in range(5):                      # binnen dezelfde minuut, zelfde fase: niets nieuws
+        for _ in range(5):                      # within the same minute, same stage: nothing new
             self.clock.advance(10)
             t.handle(msg(gcode_state="PREPARE", stg_cur=2, bed_temper=40.0))
         self.clock.advance(5)
-        t.handle(msg(gcode_state="PREPARE", stg_cur=1))      # faseovergang: meteen een punt
+        t.handle(msg(gcode_state="PREPARE", stg_cur=1))      # stage change: a point right away
         self.clock.advance(30)
-        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # weer een andere fase
+        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # another stage
         self.clock.advance(30)
-        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # < 1 min sinds vorige: niets
+        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # < 1 min since the previous: nothing
         self.clock.advance(31)
-        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # ≥ 1 min: punt
+        t.handle(msg(gcode_state="RUNNING", stg_cur=0))      # ≥ 1 min: a point
         self.clock.advance(5)
-        t.handle(msg(gcode_state="FINISH", stg_cur=255))     # einde: altijd een laatste punt
+        t.handle(msg(gcode_state="FINISH", stg_cur=255))     # end: always a last point
         t.handle(msg(gcode_state="FINISH", stg_cur=255))
         rows = self.samples()
         self.assertEqual([r["stage"] for r in rows], [2, 1, 0, 0, None])
@@ -181,7 +183,7 @@ class ListenerTest(unittest.TestCase):
     def test_samples_interval_survives_restart(self):
         self.tracker().handle(msg())
         self.clock.advance(20)
-        self.tracker().handle(msg())      # nieuwe listener, binnen de minuut, zelfde fase
+        self.tracker().handle(msg())      # new listener, within the minute, same stage
         self.assertEqual(len(self.samples()), 1)
 
     def test_samples_removed_with_print(self):
@@ -194,13 +196,13 @@ class ListenerTest(unittest.TestCase):
         t = self.tracker()
         t.handle(msg())
         live = t.live()
-        self.assertEqual(live["phase"], "Printen")
+        self.assertEqual(live["phase"], "Printing")
         self.assertEqual(live["temps"], {"nozzle": {"cur": 220.0, "target": 220.0}, "bed": {"cur": 55.0, "target": 55.0},
                                          "chamber": {"cur": 35, "target": None}})
-        self.assertEqual(live["speed"]["name"], "Standaard")
+        self.assertEqual(live["speed"]["name"], "Standard")
         self.assertEqual(live["tray"]["color"], "F7CED7")
         self.assertEqual((live["plate_idx"], live["plate_cnt"], live["percent"], live["remaining_min"]), (1, 2, 12, 160))
-        self.assertEqual(live["fans"]["onderdeel"], 100)
+        self.assertEqual(live["fans"]["part"], 100)
         json.dumps(live)
 
 
@@ -213,29 +215,33 @@ class AppTest(unittest.TestCase):
 
     def test_nozzle_filter(self):
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("INSERT INTO prints (name, nozzle) VALUES ('vier', 0.4), ('zes', 0.6), ('geen', NULL)")
+            db.execute("INSERT INTO prints (name, nozzle) VALUES ('four', 0.4), ('six', 0.6), ('none', NULL)")
         html = self.c.get("/").get_data(as_text=True)
         self.assertIn('<option value="0.4"', html)
         self.assertIn('<option value="0.6"', html)
         html = self.c.get("/?nozzle=0.6").get_data(as_text=True)
-        self.assertIn(">zes<", html)
-        self.assertNotIn(">vier<", html)
+        self.assertIn(">six<", html)
+        self.assertNotIn(">four<", html)
         self.assertIn('<option value="0.6" selected', html)
 
     def test_form_saves_new_fields(self):
-        self.c.post("/print/new", data={"name": "x", "nozzle": "0.4", "nozzle_type": "Gehard staal (HS01)",
-                                        "speed_profile": "Sport", "plate": "2", "plate_count": "3",
+        self.c.post("/print/new", data={"name": "x", "nozzle": "0.4", "nozzle_type": "Hardened steel (HS01)",
+                                        "speed_profile": "sport", "plate": "2", "plate_count": "3",
                                         "spaghetti_detection": "1", "first_layer_inspection": "0"})
         with ml.connect_db(app.DB_PATH) as db:
             p = db.execute("SELECT * FROM prints").fetchone()
         self.assertEqual((p["nozzle_type"], p["speed_profile"], p["plate"], p["plate_count"],
                           p["spaghetti_detection"], p["first_layer_inspection"]),
-                         ("Gehard staal (HS01)", "Sport", 2, 3, 1, 0))
+                         ("Hardened steel (HS01)", "sport", 2, 3, 1, 0))
         html = self.c.get("/print/1").get_data(as_text=True)
-        self.assertIn("plaat 2 van 3", html)
-        self.assertIn("Gehard staal (HS01)", html)
-        self.assertIn("Spaghetti aan", html)
-        self.assertIn("eerste laag uit", html)
+        self.assertIn("plate 2 of 3", html)
+        self.assertIn("Hardened steel (HS01)", html)
+        self.assertIn("<dd>Sport</dd>", html)
+        self.assertIn("Spaghetti on", html)
+        self.assertIn("first layer off", html)
+        self.c.post("/print/1/edit", data={"name": "x", "speed_profile": "Turbo"})   # unknown value: not stored
+        with ml.connect_db(app.DB_PATH) as db:
+            self.assertIsNone(db.execute("SELECT speed_profile FROM prints").fetchone()[0])
         self.c.post("/print/1/edit", data={"name": "x", "spaghetti_detection": ""})
         with ml.connect_db(app.DB_PATH) as db:
             self.assertIsNone(db.execute("SELECT spaghetti_detection FROM prints").fetchone()[0])
@@ -248,17 +254,17 @@ class AppTest(unittest.TestCase):
                            [("2026-11-22T14:00:00+01:00", 25, 25, 2, 0, 0), ("2026-11-22T14:01:00+01:00", 220, 55, 0, 1, 1)])
         html = self.c.get("/print/1").get_data(as_text=True)
         self.assertIn('id="tempchart"', html)
-        self.assertIn("Bed opwarmen", html)
+        self.assertIn("Heating bed", html)
         with ml.connect_db(app.DB_PATH) as db:
-            db.execute("INSERT INTO prints (id, name) VALUES (2, 'zonder')")
+            db.execute("INSERT INTO prints (id, name) VALUES (2, 'without')")
         self.assertNotIn('id="tempchart"', self.c.get("/print/2").get_data(as_text=True))
 
     def test_api_live_adds_cover_and_camera(self):
         from unittest import mock
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("INSERT INTO printers (id, name, ip, access_code, photo) VALUES (1, 'P2S', '10.0.0.2', 'x', 'pr.jpg')")
-            db.execute("INSERT INTO prints (id, name, printer_id) VALUES (5, 'loopt', 1)")
-            db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (5, 'photo', 't.png', 'thumbnail-plaat-1.png')")
+            db.execute("INSERT INTO prints (id, name, printer_id) VALUES (5, 'running', 1)")
+            db.execute("INSERT INTO files (print_id, kind, stored_name, original_name) VALUES (5, 'photo', 't.png', 'thumbnail-plate-1.png')")
         live = json.dumps({"printers": [{"printer_id": 1, "print_id": 5}]}).encode()
         resp = mock.MagicMock()
         resp.__enter__.return_value.read.return_value = live
@@ -266,6 +272,25 @@ class AppTest(unittest.TestCase):
             p = self.c.get("/api/live").get_json()["printers"][0]
         self.assertEqual((p["cover"], p["own_cover"], p["printer_photo"], p["camera"]),
                          ("/uploads/t.png", False, "/uploads/pr.jpg", True))
+
+
+class FormatTest(unittest.TestCase):
+    def test_dates_are_english_24h(self):
+        self.assertEqual(app.clock("2026-11-22T16:42:00+01:00"), "22 Nov 2026, 16:42")
+        self.assertEqual(app.clock("2026-01-05T09:07:00+01:00"), "5 Jan 2026, 09:07")
+        self.assertEqual(app.day("2026-11-22"), "22 Nov 2026")
+        self.assertEqual(app.clock(None), "–")
+        self.assertEqual(app.duration(125), "2h 05m")
+
+    def test_labels(self):
+        self.assertEqual([app.label(v) for v in ("power_loss", "succeeded", "reprint", "standard", "ludicrous")],
+                         ["Power loss", "Succeeded", "Reprint", "Standard", "Ludicrous"])
+        self.assertEqual(app.label("some_new_value"), "Some new value")
+        self.assertEqual(app.label(None), "–")
+        for values in (app.STATUSES, app.FAIL_REASONS, app.SPEED_PROFILES):   # snake_case, each with a label
+            for v in values:
+                self.assertRegex(v, r"^[a-z]+(_[a-z]+)*$")
+                self.assertIn(v, app.LABELS)
 
 
 if __name__ == "__main__":

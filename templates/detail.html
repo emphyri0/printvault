@@ -3,66 +3,66 @@
 {% block content %}
 <div class="head">
   <div>
-    <h1>{{ p.name }} <span class="badge {{ p.status }}">{{ p.status }}</span></h1>
+    <h1>{{ p.name }} <span class="badge {{ p.status }}">{{ p.status|label }}</span></h1>
     {% if p.description %}<p class="sub">{{ p.description }}</p>{% endif %}
   </div>
   <div class="actions">
-    <a class="btn" href="{{ url_for('edit_print', print_id=p.id) }}">Bewerk</a>
+    <a class="btn" href="{{ url_for('edit_print', print_id=p.id) }}">Edit</a>
     <details class="confirm">
-      <summary class="btn danger">Verwijder</summary>
+      <summary class="btn danger">Delete</summary>
       <form method="post" action="{{ url_for('delete_print', print_id=p.id) }}">
-        <p>Print en alle bestanden verwijderen?</p>
-        <button class="btn danger">Ja, verwijder</button>
+        <p>Delete this print and all its files?</p>
+        <button class="btn danger">Yes, delete</button>
       </form>
     </details>
   </div>
 </div>
 
 <dl class="specs">
-  <div><dt>Materiaal</dt><dd>{% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}{{ p.material or "–" }} {{ p.color }}</dd></div>
+  <div><dt>Material</dt><dd>{% if p.color %}<span class="dot" style="background: {{ p.color }}"></span>{% endif %}{{ p.material or "–" }} {{ p.color }}</dd></div>
   <div><dt>Filament</dt><dd>{{ ("%g g"|format(p.filament_g)) if p.filament_g else "–" }}</dd></div>
-  <div><dt>Printtijd</dt><dd>{{ p.print_time_min|duration }}</dd></div>
-  <div><dt>Laaghoogte</dt><dd>{{ ("%g mm"|format(p.layer_height)) if p.layer_height else "–" }}</dd></div>
+  <div><dt>Print time</dt><dd>{{ p.print_time_min|duration }}</dd></div>
+  <div><dt>Layer height</dt><dd>{{ ("%g mm"|format(p.layer_height)) if p.layer_height else "–" }}</dd></div>
   <div><dt>Nozzle</dt><dd>{{ ("%g mm"|format(p.nozzle)) if p.nozzle else "–" }}{% if p.nozzle_type %} · {{ p.nozzle_type }}{% endif %}</dd></div>
   <div><dt>Infill</dt><dd>{{ p.infill or "–" }}</dd></div>
-  <div><dt>Temperatuur</dt><dd>{% if p.nozzle_temp or p.bed_temp %}{{ p.nozzle_temp or "–" }} / {{ p.bed_temp or "–" }} °C{% else %}–{% endif %}</dd></div>
-  <div><dt>Plaat</dt><dd>{{ p.plate_type or "–" }}{% if p.plate %} · plaat {{ p.plate }}{% if p.plate_count %} van {{ p.plate_count }}{% endif %}{% endif %}</dd></div>
-  {% if p.speed_profile %}<div><dt>Snelheid</dt><dd>{{ p.speed_profile }}</dd></div>{% endif %}
+  <div><dt>Temperature</dt><dd>{% if p.nozzle_temp or p.bed_temp %}{{ p.nozzle_temp or "–" }} / {{ p.bed_temp or "–" }} °C{% else %}–{% endif %}</dd></div>
+  <div><dt>Plate</dt><dd>{{ p.plate_type or "–" }}{% if p.plate %} · plate {{ p.plate }}{% if p.plate_count %} of {{ p.plate_count }}{% endif %}{% endif %}</dd></div>
+  {% if p.speed_profile %}<div><dt>Speed</dt><dd>{{ p.speed_profile|label }}</dd></div>{% endif %}
   {% if p.spaghetti_detection is not none or p.first_layer_inspection is not none %}
-  <div><dt>AI-detectie</dt><dd>Spaghetti {{ {1: "aan", 0: "uit"}.get(p.spaghetti_detection, "?") }} · eerste laag {{ {1: "aan", 0: "uit"}.get(p.first_layer_inspection, "?") }}</dd></div>
+  <div><dt>AI detection</dt><dd>Spaghetti {{ {1: "on", 0: "off"}.get(p.spaghetti_detection, "?") }} · first layer {{ {1: "on", 0: "off"}.get(p.first_layer_inspection, "?") }}</dd></div>
   {% endif %}
-  {% if p.status == 'mislukt' and (p.fail_reason or p.fail_note) %}
-  <div class="failspec"><dt>Faalreden</dt><dd>{% if p.fail_reason %}<a href="{{ url_for('index', fail=p.fail_reason) }}">{{ p.fail_reason }}</a>{% endif %}{% if p.fail_note %}<span class="failnote">{{ p.fail_note }}</span>{% endif %}</dd></div>
+  {% if p.status == 'failed' and (p.fail_reason or p.fail_note) %}
+  <div class="failspec"><dt>Fail reason</dt><dd>{% if p.fail_reason %}<a href="{{ url_for('index', fail=p.fail_reason) }}">{{ p.fail_reason|label }}</a>{% endif %}{% if p.fail_note %}<span class="failnote">{{ p.fail_note }}</span>{% endif %}</dd></div>
   {% endif %}
   {% set err = p.print_error|errinfo %}
   {% if err %}
-  <div class="failspec"><dt>Printerfout</dt><dd>{% if err.text %}{{ err.text }} · {% endif %}<a href="{{ err.url }}" target="_blank" rel="noopener noreferrer">{{ err.code }}</a></dd></div>
+  <div class="failspec"><dt>Printer error</dt><dd>{% if err.text %}{{ err.text }} · {% endif %}<a href="{{ err.url }}" target="_blank" rel="noopener noreferrer">{{ err.code }}</a></dd></div>
   {% endif %}
-  <div><dt>Geprint op</dt><dd>{{ p.printed_on or "–" }}</dd></div>
-  {% if p.started_at %}<div><dt>Gestart</dt><dd>{{ p.started_at|clock }}</dd></div>{% endif %}
-  {% if p.finished_at %}<div><dt>Klaar</dt><dd>{{ p.finished_at|clock }}</dd></div>{% endif %}
+  <div><dt>Printed on</dt><dd>{{ p.printed_on|day if p.printed_on else "–" }}</dd></div>
+  {% if p.started_at %}<div><dt>Started</dt><dd>{{ p.started_at|clock }}</dd></div>{% endif %}
+  {% if p.finished_at %}<div><dt>Finished</dt><dd>{{ p.finished_at|clock }}</dd></div>{% endif %}
   <div><dt>Printer</dt><dd>{% if printer %}<a href="{{ url_for('index', printer=printer.id) }}">{{ printer.name }}</a>{% else %}–{% endif %}</dd></div>
-  {% if p.designer %}<div><dt>Ontwerper</dt><dd>{{ p.designer }}</dd></div>{% endif %}
-  {% if p.license %}<div><dt>Licentie</dt><dd>{{ p.license }}</dd></div>{% endif %}
+  {% if p.designer %}<div><dt>Designer</dt><dd>{{ p.designer }}</dd></div>{% endif %}
+  {% if p.license %}<div><dt>Licence</dt><dd>{{ p.license }}</dd></div>{% endif %}
 </dl>
 
-{% if p.source_url %}<p><a class="source" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">Bekijk bron ↗</a></p>{% endif %}
+{% if p.source_url %}<p><a class="source" href="{{ p.source_url }}" target="_blank" rel="noopener noreferrer">View source ↗</a></p>{% endif %}
 {% if p.tags %}<p class="tags">{% for t in p.tags.split(", ") %}<a href="{{ url_for('index', q=t) }}">{{ t }}</a>{% endfor %}</p>{% endif %}
 {% if p.notes %}<div class="notes">{{ p.notes }}</div>{% endif %}
 
 {% if samples %}
-<h2>Temperatuur en fasen</h2>
+<h2>Temperature and stages</h2>
 <div class="viz" id="tempchart">
   <div class="viz-legend" aria-hidden="true">
-    <span><i class="sw s1"></i>Nozzle</span><span><i class="sw s2"></i>Bed</span><span><i class="sw s3"></i>Kamer</span>
-    <span class="muted"><i class="sw dash"></i>doeltemperatuur</span>
+    <span><i class="sw s1"></i>Nozzle</span><span><i class="sw s2"></i>Bed</span><span><i class="sw s3"></i>Chamber</span>
+    <span class="muted"><i class="sw dash"></i>target temperature</span>
   </div>
   <div class="viz-plot"></div>
   <div class="viz-tip" hidden></div>
   <details class="viz-table">
-    <summary>Tabel ({{ samples|length }} meetpunten)</summary>
+    <summary>Table ({{ samples|length }} data points)</summary>
     <div class="tablewrap"><table>
-      <thead><tr><th>Tijd</th><th>Fase</th><th>Nozzle °C</th><th>Bed °C</th><th>Kamer °C</th><th>%</th><th>Laag</th></tr></thead>
+      <thead><tr><th>Time</th><th>Stage</th><th>Nozzle °C</th><th>Bed °C</th><th>Chamber °C</th><th>%</th><th>Layer</th></tr></thead>
       <tbody>{% for s in samples %}<tr><td>{{ s[0]|clock }}</td><td>{{ s[7] or "–" }}</td>
         <td>{{ s[1]|round|int if s[1] is not none else "–" }}{% if s[2] %} / {{ s[2]|round|int }}{% endif %}</td>
         <td>{{ s[3]|round|int if s[3] is not none else "–" }}{% if s[4] %} / {{ s[4]|round|int }}{% endif %}</td>
@@ -73,14 +73,14 @@
 </div>
 <script>
 (function () {
-  const S = {{ samples|tojson }};   // [tijd, nozzle, nozzle_doel, bed, bed_doel, kamer, fase, fasetekst, fasegroep, %, laag]
+  const S = {{ samples|tojson }};   // [time, nozzle, nozzle_target, bed, bed_target, chamber, stage, stage text, stage group, %, layer]
   const root = document.getElementById("tempchart"), plot = root.querySelector(".viz-plot"), tip = root.querySelector(".viz-tip");
   const NS = "http://www.w3.org/2000/svg";
   const pts = S.map(r => ({t: new Date(r[0]).getTime(), n: r[1], nt: r[2], b: r[3], bt: r[4], c: r[5],
                            stage: r[6], phase: r[7], group: r[8], pct: r[9], layer: r[10]}));
-  const SERIES = [["n", "nt", "s1", "Nozzle"], ["b", "bt", "s2", "Bed"], ["c", null, "s3", "Kamer"]];
-  const GAP = 5 * 60 * 1000;   // langer zonder meetpunt (listener offline): lijn onderbreken
-  const fmtTime = t => new Date(t).toLocaleTimeString("nl-BE", {hour: "2-digit", minute: "2-digit"});
+  const SERIES = [["n", "nt", "s1", "Nozzle"], ["b", "bt", "s2", "Bed"], ["c", null, "s3", "Chamber"]];
+  const GAP = 5 * 60 * 1000;   // longer without a data point (listener offline): break the line
+  const fmtTime = t => new Date(t).toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit", hour12: false});
   const fmtT = v => v == null ? "–" : `${Math.round(v)}°`;
   function mk(tag, attrs, parent) {
     const e = document.createElementNS(NS, tag);
@@ -91,17 +91,17 @@
   function niceMax(v) { const step = v > 150 ? 50 : 25; return Math.max(step, Math.ceil(v / step) * step); }
   function draw() {
     plot.replaceChildren();
-    if (pts.length < 2) { plot.textContent = "Nog te weinig meetpunten voor een grafiek."; return; }
+    if (pts.length < 2) { plot.textContent = "Not enough data points for a chart yet."; return; }
     const W = Math.max(300, plot.clientWidth), H = 240, BAND = 26;
     const m = {l: 40, r: 92, t: 10, b: 24 + BAND + 8};
     const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, width: W, height: H, role: "img",
-                           "aria-label": "Temperatuur van nozzle, bed en kamer in de tijd, met de fasen van de print"}, plot);
+                           "aria-label": "Nozzle, bed and chamber temperature over time, with the stages of the print"}, plot);
     const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
     const all = pts.flatMap(p => [p.n, p.nt, p.b, p.bt, p.c]).filter(v => v != null);
     const yMax = niceMax(Math.max(...all, 50));
     const x = t => m.l + (t - t0) / Math.max(1, t1 - t0) * (W - m.l - m.r);
     const yb = H - m.b, y = v => yb - v / yMax * (yb - m.t);
-    // raster en assen
+    // grid and axes
     const step = yMax > 150 ? 50 : 25;
     for (let v = 0; v <= yMax; v += step) {
       mk("line", {x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: v ? "grid" : "base"}, svg);
@@ -112,7 +112,7 @@
     for (let t = Math.ceil(t0 / tickMs) * tickMs; t <= t1; t += tickMs) {
       mk("text", {x: x(t), y: yb + 16, "text-anchor": "middle", class: "axis"}, svg).textContent = fmtTime(t);
     }
-    // lijnen (doel gestippeld, als trap: een doel springt)
+    // lines (target dashed, as steps: a target jumps)
     function path(key, stepwise) {
       let d = "", prev = null;
       for (const p of pts) {
@@ -133,32 +133,32 @@
       const last = [...pts].reverse().find(p => p[key] != null);
       labels.push({y: y(last[key]), text: `${name} ${fmtT(last[key])}`, cls});
     }
-    // directe labels rechts, uit elkaar geschoven
+    // direct labels on the right, pushed apart
     labels.sort((a, b) => a.y - b.y);
     for (let i = 1; i < labels.length; i++) labels[i].y = Math.max(labels[i].y, labels[i - 1].y + 14);
     for (const l of labels) {
       mk("circle", {cx: W - m.r + 8, cy: l.y, r: 4, class: `dot ${l.cls}`}, svg);
       mk("text", {x: W - m.r + 16, y: l.y + 4, class: "dlabel"}, svg).textContent = l.text;
     }
-    // fasebalk: tekst draagt de fase, kleur alleen voor pauze (met ⏸)
+    // stage band: text carries the stage, colour only for pauses (with ⏸)
     const by = H - BAND - 4;
     let segStart = 0, alt = 0;
     for (let i = 1; i <= pts.length; i++) {
       if (i < pts.length && pts[i].stage === pts[segStart].stage) continue;
       const a = pts[segStart], b = pts[Math.min(i, pts.length - 1)];
       const x1 = x(a.t), x2 = Math.max(x1 + 2, x(b.t) - 2);
-      const pause = a.group === "pauze";
+      const pause = a.group === "paused";
       const g = mk("g", {class: "seg"}, svg);
       mk("rect", {x: x1, y: by, width: x2 - x1, height: BAND, rx: 4, class: pause ? "band pause" : `band alt${alt}`}, g);
-      const label = (pause ? "⏸ " : "") + (a.phase || "Einde");
+      const label = (pause ? "⏸ " : "") + (a.phase || "End");
       if (x2 - x1 > label.length * 6.5 + 8) {
         mk("text", {x: x1 + 6, y: by + BAND / 2 + 4, class: "bandlabel"}, g).textContent = label;
       }
-      mk("title", {}, g).textContent = `${a.phase || "Einde"}: ${fmtTime(a.t)}–${fmtTime(b.t)}`;
+      mk("title", {}, g).textContent = `${a.phase || "End"}: ${fmtTime(a.t)}–${fmtTime(b.t)}`;
       alt = 1 - alt;
       segStart = i;
     }
-    // crosshair en tooltip
+    // crosshair and tooltip
     const cross = mk("line", {y1: m.t, y2: yb, class: "cross", visibility: "hidden"}, svg);
     const hit = mk("rect", {x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent"}, svg);
     function move(ev) {
@@ -168,9 +168,9 @@
       cross.setAttribute("x1", x(p.t)); cross.setAttribute("x2", x(p.t)); cross.setAttribute("visibility", "visible");
       tip.replaceChildren();
       const head = document.createElement("strong");
-      head.textContent = `${fmtTime(p.t)} · ${p.phase || "Einde"}`;
+      head.textContent = `${fmtTime(p.t)} · ${p.phase || "End"}`;
       tip.append(head);
-      for (const [label, cur, tar, cls] of [["Nozzle", p.n, p.nt, "s1"], ["Bed", p.b, p.bt, "s2"], ["Kamer", p.c, null, "s3"]]) {
+      for (const [label, cur, tar, cls] of [["Nozzle", p.n, p.nt, "s1"], ["Bed", p.b, p.bt, "s2"], ["Chamber", p.c, null, "s3"]]) {
         const row = document.createElement("div"), sw = document.createElement("i");
         sw.className = `sw ${cls}`;
         row.append(sw, `${label} ${fmtT(cur)}${tar ? ` → ${fmtT(tar)}` : ""}`);
@@ -179,7 +179,7 @@
       if (p.pct != null || p.layer != null) {
         const row = document.createElement("div");
         row.className = "muted";
-        row.textContent = `${p.pct ?? "–"}% · laag ${p.layer ?? "–"}`;
+        row.textContent = `${p.pct ?? "–"}% · layer ${p.layer ?? "–"}`;
         tip.append(row);
       }
       tip.hidden = false;
@@ -207,12 +207,12 @@
 </ul>
 {% endif %}
 
-<h2 id="fotos">Foto's</h2>
+<h2 id="photos">Photos</h2>
 <form class="photo-upload" method="post" action="{{ url_for('add_photos', print_id=p.id) }}" enctype="multipart/form-data">
-  <label class="btn primary">📷 Foto maken
+  <label class="btn primary">📷 Take photo
     <input type="file" name="photos" accept="image/*" capture="environment" hidden onchange="this.form.submit()">
   </label>
-  <label class="btn">Foto's kiezen
+  <label class="btn">Choose photos
     <input type="file" name="photos" accept="image/*" multiple hidden onchange="this.form.submit()">
   </label>
 </form>
@@ -222,17 +222,17 @@
   <figure class="{{ 'is-cover' if f.stored_name == cover }}">
     <a href="{{ url_for('uploaded', stored_name=f.stored_name) }}" target="_blank"><img src="{{ url_for('uploaded', stored_name=f.stored_name) }}" alt="{{ f.original_name }}" loading="lazy"></a>
     {% if f.stored_name == cover %}
-    <span class="cover-tag">omslag</span>
+    <span class="cover-tag">cover</span>
     {% else %}
-    <form class="cover-btn" method="post" action="{{ url_for('set_cover', file_id=f.id) }}"><button title="Gebruik als omslagfoto in het overzicht">★ omslag</button></form>
+    <form class="cover-btn" method="post" action="{{ url_for('set_cover', file_id=f.id) }}"><button title="Use as the cover photo in the overview">★ cover</button></form>
     {% endif %}
-    <form class="del" method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder foto">×</button></form>
+    <form class="del" method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Delete photo">×</button></form>
   </figure>
   {% endfor %}
 </div>
-{% else %}<p class="empty">Nog geen foto's.</p>{% endif %}
+{% else %}<p class="empty">No photos yet.</p>{% endif %}
 
-<h2>Modelbestanden</h2>
+<h2>Model files</h2>
 {% if models %}
 <ul class="files">
   {% for f in models %}
@@ -241,13 +241,13 @@
     <span class="meta">{{ f.size|filesize }}</span>
     {% if f.original_name.lower().endswith(('.3mf', '.gcode')) %}
     <form class="apply" method="post" action="{{ url_for('apply_file', file_id=f.id) }}">
-      {% if f.original_name.lower().endswith('.3mf') %}<input name="plate" inputmode="numeric" value="{{ p.plate or 1 }}" title="Plaatnummer" aria-label="Plaatnummer">{% endif %}
-      <button class="btn" title="Overschrijft de slicervelden met de gegevens uit dit bestand">Gegevens inlezen</button>
+      {% if f.original_name.lower().endswith('.3mf') %}<input name="plate" inputmode="numeric" value="{{ p.plate or 1 }}" title="Plate number" aria-label="Plate number">{% endif %}
+      <button class="btn" title="Overwrites the slicer fields with the data from this file">Read data</button>
     </form>
     {% endif %}
-    <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Verwijder bestand">×</button></form>
+    <form method="post" action="{{ url_for('delete_file', file_id=f.id) }}"><button class="x" title="Delete file">×</button></form>
   </li>
   {% endfor %}
 </ul>
-{% else %}<p class="empty">Geen modelbestanden.</p>{% endif %}
+{% else %}<p class="empty">No model files.</p>{% endif %}
 {% endblock %}

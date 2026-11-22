@@ -1,77 +1,77 @@
 {% extends "base.html" %}
-{% block title %}{{ "Bewerk" if p.id else "Nieuwe print" }} · Printvault{% endblock %}
+{% block title %}{{ "Edit" if p.id else "New print" }} · Printvault{% endblock %}
 {% block content %}
-<h1>{{ "Bewerk " ~ p.name if p.id else "Nieuwe print" }}</h1>
+<h1>{{ "Edit " ~ p.name if p.id else "New print" }}</h1>
 {% if not p.id %}
 <form class="import" method="post" action="{{ url_for('import_print') }}">
-  <label>Importeer van MakerWorld
+  <label>Import from MakerWorld
     <span class="pair">
       <input name="url" type="url" placeholder="https://makerworld.com/en/models/…" required>
-      <button class="btn">Importeer</button>
+      <button class="btn">Import</button>
     </span>
   </label>
-  <small>Haalt titel, ontwerper, foto, filament en printtijd op. Het 3mf-bestand download je zelf en voeg je daarna toe.</small>
+  <small>Fetches title, designer, photo, filament and print time. You download the 3mf file yourself and add it afterwards.</small>
 </form>
 <form class="import" method="post" action="{{ url_for('import_file') }}" enctype="multipart/form-data">
-  <label>Importeer uit 3MF of G-code
+  <label>Import from 3MF or G-code
     <span class="pair">
       <input name="file" type="file" accept=".3mf,.gcode" required>
-      <button class="btn">Inlezen</button>
+      <button class="btn">Read</button>
     </span>
   </label>
-  <small>Leest naam, materiaal, gewicht, printtijd, thumbnail en slicerinstellingen uit een geslicede <code>.gcode.3mf</code> of <code>.gcode</code>. Het bestand wordt meteen bij de print bewaard.</small>
+  <small>Reads name, material, weight, print time, thumbnail and slicer settings from a sliced <code>.gcode.3mf</code> or <code>.gcode</code>. The file is stored with the print right away.</small>
 </form>
-<p class="or">of vul zelf in</p>
+<p class="or">or fill it in yourself</p>
 {% endif %}
 <form class="form" method="post" enctype="multipart/form-data">
-  <label class="wide">Naam *<input name="name" value="{{ p.name or '' }}" required autofocus></label>
-  <label class="wide">Omschrijving<input name="description" value="{{ p.description or '' }}" placeholder="bv. Benchy, kabelhouder bureau…"></label>
+  <label class="wide">Name *<input name="name" value="{{ p.name or '' }}" required autofocus></label>
+  <label class="wide">Description<input name="description" value="{{ p.description or '' }}" placeholder="e.g. Benchy, desk cable holder…"></label>
 
-  <label>Materiaal
+  <label>Material
     <select name="material">
       <option value="">–</option>
       {% for m in materials %}<option {% if m == p.material %}selected{% endif %}>{{ m }}</option>{% endfor %}
     </select>
   </label>
-  <label>Kleur<input name="color" value="{{ p.color or '' }}" placeholder="bv. zwart of #ff6600"></label>
+  <label>Colour<input name="color" value="{{ p.color or '' }}" placeholder="e.g. black or #ff6600"></label>
   <label>Filament (g)<input name="filament_g" inputmode="decimal" value="{{ '%g'|format(p.filament_g) if p.filament_g else '' }}"></label>
-  <label>Printtijd
+  <label>Print time
     <span class="pair">
-      <input name="hours" inputmode="numeric" placeholder="u" value="{{ (p.print_time_min // 60) if p.print_time_min else '' }}">
+      <input name="hours" inputmode="numeric" placeholder="h" value="{{ (p.print_time_min // 60) if p.print_time_min else '' }}">
       <input name="minutes" inputmode="numeric" placeholder="min" value="{{ (p.print_time_min % 60) if p.print_time_min else '' }}">
     </span>
   </label>
-  <label>Laaghoogte (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
+  <label>Layer height (mm)<input name="layer_height" inputmode="decimal" value="{{ '%g'|format(p.layer_height) if p.layer_height else '' }}" placeholder="0.2"></label>
   <label>Nozzle (mm)<input name="nozzle" inputmode="decimal" value="{{ '%g'|format(p.nozzle) if p.nozzle else '' }}" placeholder="0.4"></label>
   <label>Infill<input name="infill" value="{{ p.infill or '' }}" placeholder="15%"></label>
-  <label>Plaattype
+  <label>Plate type
     <input name="plate_type" list="plate-types" value="{{ p.plate_type or '' }}" placeholder="Textured PEI Plate">
     <datalist id="plate-types">
       <option>Textured PEI Plate</option><option>Smooth PEI Plate</option><option>Cool Plate</option>
       <option>Cool Plate (SuperTack)</option><option>Engineering Plate</option><option>High Temp Plate</option>
     </datalist>
   </label>
-  <label>Nozzletemp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
-  <label>Bedtemp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
-  <label>Plaat
+  <label>Nozzle temp (°C)<input name="nozzle_temp" inputmode="numeric" value="{{ p.nozzle_temp or '' }}" placeholder="220"></label>
+  <label>Bed temp (°C)<input name="bed_temp" inputmode="numeric" value="{{ p.bed_temp or '' }}" placeholder="55"></label>
+  <label>Plate
     <span class="pair">
-      <input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="nr." aria-label="Plaatnummer">
-      <input name="plate_count" inputmode="numeric" value="{{ p.plate_count or '' }}" placeholder="van" aria-label="Aantal platen">
+      <input name="plate" inputmode="numeric" value="{{ p.plate or '' }}" placeholder="no." aria-label="Plate number">
+      <input name="plate_count" inputmode="numeric" value="{{ p.plate_count or '' }}" placeholder="of" aria-label="Number of plates">
     </span>
   </label>
-  <label>Nozzletype<input name="nozzle_type" value="{{ p.nozzle_type or '' }}" placeholder="bv. Gehard staal (HS01)"></label>
-  <label>Snelheidsprofiel
+  <label>Nozzle type<input name="nozzle_type" value="{{ p.nozzle_type or '' }}" placeholder="e.g. Hardened steel (HS01)"></label>
+  <label>Speed profile
     <select name="speed_profile">
       <option value="">–</option>
-      {% for sp in speed_profiles %}<option {% if sp == p.speed_profile %}selected{% endif %}>{{ sp }}</option>{% endfor %}
+      {% for sp in speed_profiles %}<option value="{{ sp }}" {% if sp == p.speed_profile %}selected{% endif %}>{{ sp|label }}</option>{% endfor %}
     </select>
   </label>
-  {% for field, label in [("spaghetti_detection", "Spaghettidetectie"), ("first_layer_inspection", "Eerstelaaginspectie")] %}
-  <label>{{ label }}
+  {% for field, text in [("spaghetti_detection", "Spaghetti detection"), ("first_layer_inspection", "First layer inspection")] %}
+  <label>{{ text }}
     <select name="{{ field }}">
       <option value="">–</option>
-      <option value="1" {% if p[field] == 1 %}selected{% endif %}>aan</option>
-      <option value="0" {% if p[field] == 0 %}selected{% endif %}>uit</option>
+      <option value="1" {% if p[field] == 1 %}selected{% endif %}>on</option>
+      <option value="0" {% if p[field] == 0 %}selected{% endif %}>off</option>
     </select>
   </label>
   {% endfor %}
@@ -80,35 +80,35 @@
       <option value="">–</option>
       {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == p.printer_id %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
     </select>
-    {% if not all_printers %}<small><a href="{{ url_for('new_printer') }}">Voeg eerst een printer toe</a></small>{% endif %}
+    {% if not all_printers %}<small><a href="{{ url_for('new_printer') }}">Add a printer first</a></small>{% endif %}
   </label>
   <label>Status
     <select name="status">
-      {% for s in statuses %}<option {% if s == p.status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+      {% for s in statuses %}<option value="{{ s }}" {% if s == p.status %}selected{% endif %}>{{ s|label }}</option>{% endfor %}
     </select>
   </label>
-  <label>Geprint op<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
-  <fieldset class="fail wide" id="fail-fields" {% if p.status != 'mislukt' %}hidden{% endif %}>
-    <label>Faalreden
+  <label>Printed on<input type="date" name="printed_on" value="{{ p.printed_on or '' }}"></label>
+  <fieldset class="fail wide" id="fail-fields" {% if p.status != 'failed' %}hidden{% endif %}>
+    <label>Fail reason
       <select name="fail_reason" id="fail-reason">
-        <option value="">– kies –</option>
-        {% for r in fail_reasons %}<option {% if r == p.fail_reason %}selected{% endif %}>{{ r }}</option>{% endfor %}
+        <option value="">– choose –</option>
+        {% for r in fail_reasons %}<option value="{{ r }}" {% if r == p.fail_reason %}selected{% endif %}>{{ r|label }}</option>{% endfor %}
       </select>
     </label>
-    <label>Toelichting<input name="fail_note" id="fail-note" value="{{ p.fail_note or '' }}" placeholder="Wat ging er mis? Bij 'anders' graag invullen."></label>
+    <label>Explanation<input name="fail_note" id="fail-note" value="{{ p.fail_note or '' }}" placeholder="What went wrong? Please fill in for 'Other'."></label>
   </fieldset>
-  <label class="wide">Bronlink<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="bv. MakerWorld- of Printables-link"></label>
-  <label>Ontwerper<input name="designer" value="{{ p.designer or '' }}"></label>
-  <label>Licentie<input name="license" value="{{ p.license or '' }}" placeholder="bv. BY-NC-SA"></label>
-  <label class="wide">Tags<input name="tags" value="{{ p.tags or '' }}" placeholder="komma-gescheiden, bv. functioneel, gift"></label>
-  <label class="wide">Notities<textarea name="notes" rows="5" placeholder="Wat ging goed of fout, instellingen, supports…">{{ p.notes or '' }}</textarea></label>
-  <label class="wide">Bestanden toevoegen
+  <label class="wide">Source link<input name="source_url" type="url" value="{{ p.source_url or '' }}" placeholder="e.g. a MakerWorld or Printables link"></label>
+  <label>Designer<input name="designer" value="{{ p.designer or '' }}"></label>
+  <label>Licence<input name="license" value="{{ p.license or '' }}" placeholder="e.g. BY-NC-SA"></label>
+  <label class="wide">Tags<input name="tags" value="{{ p.tags or '' }}" placeholder="comma-separated, e.g. functional, gift"></label>
+  <label class="wide">Notes<textarea name="notes" rows="5" placeholder="What went well or wrong, settings, supports…">{{ p.notes or '' }}</textarea></label>
+  <label class="wide">Add files
     <input type="file" name="files" multiple accept=".jpg,.jpeg,.png,.webp,.gif,.3mf,.stl,.step,.stp,.obj,.gcode">
-    <small>Foto's (jpg, png, webp) en modellen (3mf, stl, step, obj, gcode)</small>
+    <small>Photos (jpg, png, webp) and models (3mf, stl, step, obj, gcode)</small>
   </label>
   <div class="actions wide">
-    <button class="btn primary">Opslaan</button>
-    <a class="btn ghost" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">Annuleer</a>
+    <button class="btn primary">Save</button>
+    <a class="btn ghost" href="{{ url_for('show_print', print_id=p.id) if p.id else url_for('index') }}">Cancel</a>
   </div>
 </form>
 <script>
@@ -118,8 +118,8 @@
     var reason = document.getElementById('fail-reason');
     var note = document.getElementById('fail-note');
     function sync() {
-      box.hidden = status.value !== 'mislukt';
-      note.required = !box.hidden && reason.value === 'anders';
+      box.hidden = status.value !== 'failed';
+      note.required = !box.hidden && reason.value === 'other';
     }
     status.addEventListener('change', sync);
     reason.addEventListener('change', sync);

@@ -11,15 +11,15 @@ services:
     environment:
       LIVE_URL: http://printvault-mqtt:8101/live
     ports:
-      # 0.0.0.0: bewust bereikbaar in het LAN en via Tailscale
+      # 0.0.0.0: deliberately reachable on the LAN and via Tailscale
       - "0.0.0.0:8100:5000"
     volumes:
       - ./data:/data
     networks:
       - printvault
 
-  # Luistert (alleen lezen) via MQTT naar de printers die in Printvault een IP, serienummer
-  # en access code hebben. Live status op :8101, enkel bereikbaar binnen het printvault-netwerk.
+  # Listens (read-only) via MQTT to the printers that have an IP, serial number and access code
+  # in Printvault. Live status on :8101, only reachable inside the printvault network.
   printvault-mqtt:
     image: printvault:local
     container_name: printvault-mqtt

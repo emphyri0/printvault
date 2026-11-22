@@ -3,40 +3,40 @@
 <section id="live" class="live" hidden aria-live="polite"></section>
 <section class="stats">
   <div><span>{{ stats.n }}</span>prints</div>
-  <div><span>{{ stats.ok or 0 }}</span>gelukt</div>
-  <div><span>{{ stats.failed or 0 }}</span>mislukt</div>
+  <div><span>{{ stats.ok or 0 }}</span>succeeded</div>
+  <div><span>{{ stats.failed or 0 }}</span>failed</div>
   <div><span>{{ "%.2f"|format(stats.grams / 1000) }} kg</span>filament</div>
-  <div><span>{{ stats.minutes|duration }}</span>printtijd</div>
+  <div><span>{{ stats.minutes|duration }}</span>print time</div>
 </section>
 
 <form class="filters" method="get">
-  <input type="search" name="q" value="{{ q }}" placeholder="Zoek op naam, tag, notitie…">
+  <input type="search" name="q" value="{{ q }}" placeholder="Search name, tag, note…">
   <select name="material">
-    <option value="">Alle materialen</option>
+    <option value="">All materials</option>
     {% for m in materials %}<option {% if m == material %}selected{% endif %}>{{ m }}</option>{% endfor %}
   </select>
   {% if all_printers %}
   <select name="printer">
-    <option value="">Alle printers</option>
+    <option value="">All printers</option>
     {% for pr in all_printers %}<option value="{{ pr.id }}" {% if pr.id == printer %}selected{% endif %}>{{ pr.name }}</option>{% endfor %}
   </select>
   {% endif %}
   <select name="status">
-    <option value="">Alle statussen</option>
-    {% for s in statuses %}<option {% if s == status %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    <option value="">All statuses</option>
+    {% for s in statuses %}<option value="{{ s }}" {% if s == status %}selected{% endif %}>{{ s|label }}</option>{% endfor %}
   </select>
   <select name="fail">
-    <option value="">Alle faalredenen</option>
-    {% for r in fail_reasons %}<option {% if r == fail %}selected{% endif %}>{{ r }}</option>{% endfor %}
+    <option value="">All fail reasons</option>
+    {% for r in fail_reasons %}<option value="{{ r }}" {% if r == fail %}selected{% endif %}>{{ r|label }}</option>{% endfor %}
   </select>
   {% if nozzles %}
   <select name="nozzle">
-    <option value="">Alle nozzles</option>
+    <option value="">All nozzles</option>
     {% for n in nozzles %}<option value="{{ '%g'|format(n) }}" {% if nozzle and (n - nozzle)|abs < 0.001 %}selected{% endif %}>{{ '%g'|format(n) }} mm</option>{% endfor %}
   </select>
   {% endif %}
   <button class="btn">Filter</button>
-  {% if q or material or status or printer or fail or nozzle %}<a class="btn ghost" href="{{ url_for('index') }}">Wis</a>{% endif %}
+  {% if q or material or status or printer or fail or nozzle %}<a class="btn ghost" href="{{ url_for('index') }}">Clear</a>{% endif %}
 </form>
 
 {% if prints %}
@@ -44,12 +44,12 @@
   {% for p in prints %}
   <a class="card" href="{{ url_for('show_print', print_id=p.id) }}">
     <div class="thumb">
-      {% if p.status == 'bezig' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
+      {% if p.status == 'printing' and p.has_camera and not p.own_cover %}<img class="livesnap" src="{{ url_for('camera_snapshot', printer_id=p.printer_id) }}"
         data-printer="{{ p.printer_id }}" data-print="{{ p.id }}"{% if p.cover %} data-fallback="{{ url_for('uploaded', stored_name=p.cover) }}"{% endif %}
-        alt="Camerabeeld van de printer" loading="lazy"><span class="snaptag">live</span>
+        alt="Camera image of the printer" loading="lazy"><span class="snaptag">live</span>
       {% elif p.cover %}<img src="{{ url_for('uploaded', stored_name=p.cover) }}" alt="" loading="lazy">
-      {% else %}<div class="nothumb">geen foto</div>{% endif %}
-      <span class="badge {{ p.status }}">{{ p.status }}{% if p.status == 'mislukt' and p.fail_reason %} · {{ p.fail_reason }}{% endif %}</span>
+      {% else %}<div class="nothumb">no photo</div>{% endif %}
+      <span class="badge {{ p.status }}">{{ p.status|label }}{% if p.status == 'failed' and p.fail_reason %} · {{ p.fail_reason|label }}{% endif %}</span>
     </div>
     <div class="body">
       <h3>{{ p.name }}</h3>
@@ -63,13 +63,13 @@
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">{% if q or material or status or printer or fail or nozzle %}Niets gevonden.{% else %}Nog geen prints. <a href="{{ url_for('new_print') }}">Voeg je eerste toe.</a>{% endif %}</p>
+<p class="empty">{% if q or material or status or printer or fail or nozzle %}Nothing found.{% else %}No prints yet. <a href="{{ url_for('new_print') }}">Add your first one.</a>{% endif %}</p>
 {% endif %}
 <script>
 (function () {
   const box = document.getElementById("live");
-  const labels = {PREPARE: "voorbereiden", RUNNING: "bezig", PAUSE: "gepauzeerd", FINISH: "klaar",
-                  FAILED: "mislukt", IDLE: "inactief"};
+  const labels = {PREPARE: "Preparing", RUNNING: "Printing", PAUSE: "Paused", FINISH: "Finished",
+                  FAILED: "Failed", IDLE: "Idle"};
   function el(tag, cls, text) {
     const e = document.createElement(tag);
     if (cls) e.className = cls;
@@ -79,9 +79,9 @@
   function dur(min) {
     if (min == null) return "–";
     const h = Math.floor(min / 60), m = min % 60;
-    return h ? `${h}u ${String(m).padStart(2, "0")}m` : `${m}m`;
+    return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m}m`;
   }
-  function fmt(v) { return Number(v).toLocaleString("nl-BE", {maximumFractionDigits: 1}); }
+  function fmt(v) { return Number(v).toLocaleString("en-GB", {maximumFractionDigits: 1}); }
   function amsName(id) {
     const n = Number(id);
     return Number.isInteger(n) && n >= 0 && n < 4 ? "AMS " + "ABCD"[n] : "AMS " + id;
@@ -93,7 +93,7 @@
     svg.setAttribute("viewBox", "0 0 100 24");
     svg.setAttribute("preserveAspectRatio", "none");
     const t = document.createElementNS(ns, "title");
-    t.textContent = title + (values.length ? `: ${fmt(Math.min(...values))}–${fmt(Math.max(...values))}` : ": nog geen metingen");
+    t.textContent = title + (values.length ? `: ${fmt(Math.min(...values))}–${fmt(Math.max(...values))}` : ": no readings yet");
     svg.append(t);
     if (values.length > 1) {
       const lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
@@ -105,29 +105,29 @@
     }
     return svg;
   }
-  // Per printer een vast blok (kaart + camera). Alleen de kaart wordt bij elke poll vervangen,
-  // zodat een open camerastream niet telkens herstart.
+  // One fixed block per printer (card + camera). Only the card is replaced on every poll,
+  // so an open camera stream does not restart each time.
   const items = new Map();
   function camPanel(id) {
     const wrap = el("div", "livecam");
     const bar = el("div", "camctl");
     const btn = el("button", "btn ghost", "📷 Camera");
     btn.type = "button";
-    const full = el("a", "btn ghost", "↗ Nieuw tabblad");
+    const full = el("a", "btn ghost", "↗ New tab");
     full.href = `/printers/${id}/camera.mjpg`;
     full.target = "_blank";
     full.rel = "noopener";
     full.hidden = true;
     bar.append(btn, full);
     const img = el("img");
-    img.alt = "Camerabeeld";
+    img.alt = "Camera image";
     img.hidden = true;
     const msg = el("div", "meta");
     msg.hidden = true;
     wrap.append(bar, img, msg);
     let open = false;
     function start() {
-      msg.textContent = "Camerabeeld laden…";
+      msg.textContent = "Loading camera image…";
       msg.hidden = false;
       img.hidden = false;
       img.src = `/printers/${id}/camera.mjpg?t=${Date.now()}`;
@@ -137,27 +137,27 @@
     img.addEventListener("error", () => {
       if (!open || !img.getAttribute("src")) return;
       img.hidden = true;
-      msg.textContent = "Geen camerabeeld. Staat LAN-liveview aan op de printer?";
+      msg.textContent = "No camera image. Is LAN live view enabled on the printer?";
       msg.hidden = false;
     });
     btn.addEventListener("click", () => {
       open = !open;
-      btn.textContent = open ? "📷 Camera sluiten" : "📷 Camera";
+      btn.textContent = open ? "📷 Close camera" : "📷 Camera";
       full.hidden = !open;
       open ? start() : stop();
     });
-    // geen stream naar een tabblad dat niemand bekijkt
+    // no stream to a tab nobody is looking at
     document.addEventListener("visibilitychange", () => {
       if (!open) return;
       document.hidden ? stop() : start();
     });
     return wrap;
   }
-  // Kaarten van lopende prints zonder eigen omslag (een thumbnail telt niet) tonen het camerabeeld van de printer (elke 30 s nieuw).
-  // Is de print volgens de live status niet meer bezig, dan nog één laatste beeld en daarna stoppen:
-  // bij het herladen staat er dan de eindfoto die de listener aan de print hing.
+  // Cards of running prints without an own cover (a thumbnail does not count) show the printer's camera image (new every 30 s).
+  // When the live status says the print is no longer running: one last image, then stop.
+  // After a reload the card shows the end photo the listener attached to the print.
   const SNAP_MS = 30000;
-  function snapFailed(img) {   // geen camerabeeld: terug naar de thumbnail, of "geen foto"
+  function snapFailed(img) {   // no camera image: back to the thumbnail, or "no photo"
     img.nextElementSibling?.classList.contains("snaptag") && img.nextElementSibling.remove();
     if (img.dataset.fallback) {
       const thumb = el("img");
@@ -165,22 +165,22 @@
       thumb.src = img.dataset.fallback;
       img.replaceWith(thumb);
     } else {
-      img.replaceWith(el("div", "nothumb", "geen foto"));
+      img.replaceWith(el("div", "nothumb", "no photo"));
     }
   }
   function refreshSnap(img, last) {
     const next = new Image();
     next.onload = () => {
       img.src = next.src;
-      if (last) { img.dataset.done = "1"; img.nextElementSibling.textContent = "einde"; }
+      if (last) { img.dataset.done = "1"; img.nextElementSibling.textContent = "end"; }
     };
     next.src = `/printers/${img.dataset.printer}/snapshot.jpg?t=${Date.now()}`;
   }
   for (const img of document.querySelectorAll("img.livesnap")) {
     img.addEventListener("error", () => snapFailed(img), {once: true});
-    if (img.complete && !img.naturalWidth) snapFailed(img);   // al mislukt voor dit script liep
+    if (img.complete && !img.naturalWidth) snapFailed(img);   // already failed before this script ran
   }
-  let activePrints = null;   // print-id's die volgens de listener nu lopen (null = onbekend)
+  let activePrints = null;   // print ids that are running according to the listener (null = unknown)
   setInterval(() => {
     if (document.hidden) return;
     for (const img of document.querySelectorAll("img.livesnap:not([data-done])")) {
@@ -188,17 +188,17 @@
       refreshSnap(img, ended);
     }
   }, SNAP_MS);
-  // ---------- statuskaart in de stijl van het printerscherm ----------
+  // ---------- status card in the style of the printer screen ----------
   const ACTIVE = ["PREPARE", "RUNNING", "PAUSE"];
   function endClock(min) {
     if (min == null) return null;
     const end = new Date(Date.now() + min * 60000), now = new Date();
-    const hm = end.toLocaleTimeString("nl-BE", {hour: "2-digit", minute: "2-digit"});
+    const hm = end.toLocaleTimeString("en-GB", {hour: "2-digit", minute: "2-digit", hour12: false});
     const days = Math.round((new Date(end).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 864e5);
-    return days === 0 ? hm : days === 1 ? `morgen ${hm}` : `${end.toLocaleDateString("nl-BE", {weekday: "short"})} ${hm}`;
+    return days === 0 ? hm : days === 1 ? `tomorrow ${hm}` : `${end.toLocaleDateString("en-GB", {weekday: "short"})} ${hm}`;
   }
   const deg = v => v == null ? "–" : `${Math.round(v)}°`;
-  // Beeldvak links: blijft bestaan tussen polls; enkel de bron wisselt als dat nodig is.
+  // Image box on the left: persists between polls; only the source changes when needed.
   function mediaBox() {
     const box = el("div", "livemedia"), img = el("img"), tag = el("span", "snaptag", "live");
     img.alt = "";
@@ -213,7 +213,7 @@
     img.addEventListener("load", () => { box.hidden = false; });
     return {
       el: box,
-      set(kind, url, fb) {   // kind: "snap" (url = printer-id), "img" of null
+      set(kind, url, fb) {   // kind: "snap" (url = printer id), "img" or null
         fallback = fb || null;
         const key = kind && `${kind}:${url}`;
         if (want && want.key === key) return;
@@ -225,7 +225,7 @@
           load(snapUrl(url));
           timer = setInterval(() => {
             if (document.hidden) return;
-            const next = new Image();   // eerst laden, dan wisselen: geen flikkering
+            const next = new Image();   // load first, then swap: no flicker
             next.onload = () => { img.src = next.src; };
             next.src = snapUrl(url);
           }, SNAP_MS);
@@ -266,26 +266,26 @@
       if (p.print_id) card.href = "/print/" + p.print_id;
       const head = el("div", "livehead");
       head.append(el("strong", null, p.printer));
-      const st = !p.connected ? "niet verbonden" : (p.phase || labels[p.gcode_state] || p.gcode_state || "wachten…");
+      const st = !p.connected ? "not connected" : (p.phase || labels[p.gcode_state] || p.gcode_state || "waiting…");
       const stEl = el("span", "livestate " + (p.connected ? (p.gcode_state || "").toLowerCase() : "offline"), st);
       head.append(stEl);
       card.append(head);
       if (active || ended) {
         const nm = el("div", "livename", p.name || "–");
         card.append(nm);
-        if (p.plate_cnt > 1 && p.plate_idx) card.append(el("div", "meta", `plaat ${p.plate_idx} van ${p.plate_cnt}`));
+        if (p.plate_cnt > 1 && p.plate_idx) card.append(el("div", "meta", `plate ${p.plate_idx} of ${p.plate_cnt}`));
         const bar = el("div", "bar"), fill = el("span");
         fill.style.width = Math.max(0, Math.min(100, p.percent || 0)) + "%";
         bar.append(fill);
         card.append(bar);
         const prog = el("div", "lprog");
-        prog.append(el("strong", null, `${p.percent ?? "–"}%`), el("span", null, `laag ${p.layer ?? "–"}/${p.total_layers ?? "–"}`));
+        prog.append(el("strong", null, `${p.percent ?? "–"}%`), el("span", null, `layer ${p.layer ?? "–"}/${p.total_layers ?? "–"}`));
         if (active) {
-          prog.append(el("span", null, `nog ${dur(p.remaining_min)}`));
+          prog.append(el("span", null, `${dur(p.remaining_min)} left`));
           const clock = endClock(p.remaining_min);
-          if (clock) prog.append(el("span", "lend", `klaar om ${clock}`));
+          if (clock) prog.append(el("span", "lend", `done at ${clock}`));
         }
-        if (p.error && p.gcode_state === "FAILED") prog.append(el("span", "liveerr", `fout ${p.error}`));
+        if (p.error && p.gcode_state === "FAILED") prog.append(el("span", "liveerr", `error ${p.error}`));
         card.append(prog);
       }
       if (p.gcode_state === "FAILED" && p.error_text) card.append(el("div", "meta liveerr", p.error_text));
@@ -293,14 +293,14 @@
       if (p.connected && (temps.nozzle || temps.bed)) {
         const row = el("div", "ltemps");
         row.append(tempTile("Nozzle", temps.nozzle), tempTile("Bed", temps.bed));
-        if (temps.chamber && temps.chamber.cur != null) row.append(tempTile("Kamer", temps.chamber));
+        if (temps.chamber && temps.chamber.cur != null) row.append(tempTile("Chamber", temps.chamber));
         card.append(row);
       }
       if (p.connected && (active || ended)) {
         const info = el("div", "linfo");
         if (p.speed) info.append(el("span", null, `⚡ ${p.speed.name}${p.speed.percent ? ` ${p.speed.percent}%` : ""}`));
         const fans = p.fans || {};
-        const fanText = [["onderdeel", "onderdeel"], ["aux", "aux"], ["kamer", "kamer"], ["heatbreak", "heatbreak"]]
+        const fanText = [["part", "part"], ["aux", "aux"], ["chamber", "chamber"], ["heatbreak", "heatbreak"]]
           .filter(([k]) => fans[k] != null).map(([k, label]) => `${label} ${fans[k]}%`).join(" · ");
         if (fanText) info.append(el("span", null, `🌀 ${fanText}`));
         if (p.tray) {
@@ -315,7 +315,7 @@
       for (const h of (p.hms || [])) {
         const line = el("div", "meta livehms");
         line.append("HMS ");
-        // de kaart is zelf een link naar de print; dan geen geneste link
+        // the card itself links to the print; then no nested link
         const a = el(p.print_id ? "span" : "a", null, h.code);
         if (!p.print_id) { a.href = h.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
         line.append(a, h.text ? ` · ${h.text}` : (h.module ? ` · ${h.module}` : ""));
@@ -327,12 +327,12 @@
         for (const u of ams) {
           const row = el("div", "amsrow");
           row.append(el("span", "amsname", amsName(u.id)));
-          const hum = u.humidity_pct != null ? `${fmt(u.humidity_pct)} %` : (u.humidity_level != null ? `niveau ${u.humidity_level}` : "–");
+          const hum = u.humidity_pct != null ? `${fmt(u.humidity_pct)} %` : (u.humidity_level != null ? `level ${u.humidity_level}` : "–");
           row.append(el("span", null, `💧 ${hum}`), el("span", null, u.temp != null ? `🌡 ${fmt(u.temp)} °C` : ""));
           const hist = ((p.ams_history || {})[u.id] || []);
           const useLevel = u.humidity_pct == null;
           row.append(spark(hist.map(r => useLevel ? r[2] : r[1]).filter(v => v != null),
-                           `Vochtigheid laatste 24 uur (${useLevel ? "niveau" : "%"})`));
+                           `Humidity, last 24 hours (${useLevel ? "level" : "%"})`));
           list.append(row);
         }
         card.append(list);
@@ -346,7 +346,7 @@
       chooseMedia(p, item.media);
       if (item.card) item.card.replaceWith(card); else item.media.el.after(card);
       item.card = card;
-      box.append(item.root);   // volgorde volgen; verplaatsen breekt de stream niet
+      box.append(item.root);   // follow the order; moving does not break the stream
       seen.add(p.printer_id);
     }
     for (const [id, item] of items) {
@@ -362,7 +362,7 @@
     try {
       const r = await fetch("/api/live", {cache: "no-store"});
       if (r.ok) render(await r.json());
-    } catch (e) { /* stil: probeer het straks opnieuw */ }
+    } catch (e) { /* quiet: try again later */ }
     setTimeout(poll, document.hidden ? 30000 : 5000);
   }
   poll();
