@@ -97,27 +97,27 @@ class TrackerTest(unittest.TestCase):
         self.clock.advance(10)
         t.handle(report("FAILED", error=0x07008011))
         p = self.prints()[0]
-        self.assertEqual((p["status"], p["print_error"], p["fail_note"]), ("mislukt", 0x07008011, "Printerfout 0700-8011"))
+        self.assertEqual((p["status"], p["print_error"]), ("mislukt", 0x07008011))
+        self.assertEqual(p["fail_note"], "Printerfout 0700-8011: AMS filament is op. Plaats een nieuw filament in dezelfde AMS-sleuf.")
+        self.assertIsNone(p["fail_reason"])
         self.assertEqual(p["print_time_min"], 10)
 
     def test_failed_with_known_code_fills_reason_and_hms(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
-        hms = [{"attr": 0x0C001000, "code": 0x00030001}]
-        with mock.patch.dict(be.PRINT_ERRORS, {"0300-9999": ("Spaghetti gedetecteerd (test)", "spaghetti")}):
-            t.handle(report("FAILED", error=0x03009999, hms=hms))
+        hms = [{"attr": 0x0C00FFFF, "code": 0x0003FFFF}]       # onbekende HMS-code
+        t.handle(report("FAILED", error=0x03008003, hms=hms))
         p = self.prints()[0]
         self.assertEqual(p["fail_reason"], "spaghetti")
-        self.assertEqual(p["fail_note"], "Printerfout 0300-9999: Spaghetti gedetecteerd (test)\n"
-                                         "HMS 0C00_1000_0003_0001 (camera/AI-detectie)")
+        self.assertEqual(p["fail_note"], "Printerfout 0300-8003: " + be.PRINT_ERRORS["0300-8003"] + "\n"
+                                         "HMS 0C00_FFFF_0003_FFFF (camera/AI-detectie)")
 
     def test_failed_keeps_manual_reason(self):
         t = self.tracker()
         t.handle(report("RUNNING"))
         with ml.connect_db(app.DB_PATH) as db:
             db.execute("UPDATE prints SET fail_reason = 'warping', fail_note = 'zelf gezien'")
-        with mock.patch.dict(be.PRINT_ERRORS, {"0300-9999": ("Test", "spaghetti")}):
-            t.handle(report("FAILED", error=0x03009999))
+        t.handle(report("FAILED", error=0x03008003))
         p = self.prints()[0]
         self.assertEqual((p["fail_reason"], p["fail_note"]), ("warping", "zelf gezien"))
 
@@ -125,7 +125,7 @@ class TrackerTest(unittest.TestCase):
         t = self.tracker()
         t.handle(report("PAUSE", error=ml.CANCELLED, hms=[{"attr": 0x07002000, "code": 0x00020001}]))
         live = t.live()
-        self.assertEqual((live["error"], live["error_text"]), ("0300-400C", "Print geannuleerd op de printer"))
+        self.assertEqual((live["error"], live["error_text"]), ("0300-400C", "De taak is geannuleerd."))
         self.assertEqual(live["hms"][0]["code"], "0700_2000_0002_0001")
 
     def test_cancelled(self):
@@ -308,9 +308,10 @@ class AppTest(unittest.TestCase):
             db.execute("INSERT INTO prints (name, status, print_error) VALUES ('x', 'mislukt', ?), ('y', 'mislukt', ?)",
                        (ml.CANCELLED, 0x07008011))
         html = self.c.get("/print/1").get_data(as_text=True)
-        self.assertIn("Print geannuleerd op de printer", html)
-        self.assertIn("hmscode/0300_400C", html)
+        self.assertIn("De taak is geannuleerd.", html)
+        self.assertIn('href="https://wiki.bambulab.com/en/hms/home"', html)
         html = self.c.get("/print/2").get_data(as_text=True)
+        self.assertIn("AMS filament is op.", html)
         self.assertIn(">0700-8011</a>", html)
 
     def test_api_live_adds_ams_history(self):

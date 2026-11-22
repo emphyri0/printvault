@@ -3,6 +3,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY *.py .
+COPY bambu_errors_data.json .
 COPY templates templates
 COPY static static
 ENV DATA_DIR=/data

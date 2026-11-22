@@ -151,7 +151,12 @@ class TrackerNotifyTest(unittest.TestCase):
         self.sent.clear()
         t.handle(report("RUNNING", task="2"))
         t.handle(report("FAILED", error=0x07008011, task="2"))
-        self.assertEqual(self.sent[0][2], "P2S\nPrinterfout 0700-8011")
+        self.assertEqual(self.sent[0][2], "P2S\nPrinterfout 0700-8011: AMS filament is op. "
+                                          "Plaats een nieuw filament in dezelfde AMS-sleuf.")
+        self.sent.clear()
+        t.handle(report("RUNNING", task="3"))
+        t.handle(report("FAILED", error=0x0300FFFF, task="3"))      # onbekende code
+        self.assertEqual(self.sent[0][2], "P2S\nPrinterfout 0300-FFFF")
 
     def test_no_notification_for_end_seen_after_restart(self):
         self.tracker().handle(report("RUNNING"))

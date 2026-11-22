@@ -27,7 +27,14 @@ Vul bij **Printers → Bewerk** het IP-adres, serienummer en de access code in e
 
 ## Foutcodes
 
-De vertaling staat in `bambu_errors.py`: `PRINT_ERRORS` (notatie `0300-400C`) en `HMS_CODES` (notatie `0700_2000_0002_0001`), telkens `code: (tekst, faalreden of None)`. De tabel bevat bewust alleen codes waarvan de betekenis vaststaat; voeg er gerust aan toe. Een onbekende code wordt getoond als code met een link naar de Bambu-wiki (`WIKI_URL`).
+De teksten (Nederlands, Engels als terugval, P2S-varianten waar die bestaan) en wiki-links staan in `bambu_errors_data.json`. Bron: de foutcodelijsten van [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`scripts/hms_error_text/`, MIT), die zelf van Bambu Lab komen (`e.bambulab.com`, zoals Bambu Studio) en van de [HMS-wiki](https://wiki.bambulab.com/en/hms/home). De gebruikte commit staat in `_source` in het bestand.
+
+```bash
+python3 scripts/update_bambu_errors.py             # tabel opnieuw genereren (laatste main)
+python3 scripts/update_bambu_errors.py --ref <sha> # of een vaste versie
+```
+
+Daarna opnieuw bouwen (`docker compose up -d --build`). Eigen teksten en de voorgestelde faalreden per code staan in `bambu_errors.py` (`PRINT_ERRORS_EXTRA`, `HMS_CODES_EXTRA`, `FAIL_REASONS_BY_CODE`) en worden door het script niet overschreven. Alleen HMS-codes hebben een eigen wikipagina; voor print_error-codes en HMS-codes zonder bekende pagina linkt Printvault naar de HMS-startpagina.
 
 ## Onderhoud en meldingen
 
