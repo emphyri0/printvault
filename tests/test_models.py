@@ -220,8 +220,11 @@ class JpegStreamTest(unittest.TestCase):
         with mock.patch("camera._tls_connect", fake.connect):
             cam = camera.Camera("10.0.0.2", CODE, route="tcp6000", idle=0)
             frames = cam.frames(stall=5)
-            self.assertEqual(next(frames), jpeg(5))
-            self.assertEqual(next(frames), jpeg(6))
+            # a viewer always gets the newest frame, so it may start at 5 or 6 (timing); it ends at 6
+            seen = [next(frames)]
+            while seen[-1] != jpeg(6):
+                seen.append(next(frames))
+            self.assertIn(seen, ([jpeg(5), jpeg(6)], [jpeg(6)]))
             frames.close()
             cam.close()
         fake.server.close()

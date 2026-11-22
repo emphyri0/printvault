@@ -211,14 +211,14 @@ class EndSnapshotTest(unittest.TestCase):
         self.assertEqual(self.cover(pid), f["stored_name"])
 
     def test_replaces_thumbnail_as_cover(self):
-        pid, ids = self.new_print(["thumbnail-plaat-1.png", "makerworld-cover.jpg"])
+        pid, ids = self.new_print(["thumbnail-plate-1.png", "makerworld-cover.jpg"])
         fid = self.save(pid)
         with ml.connect_db(app.DB_PATH) as db:
             stored = db.execute("SELECT stored_name FROM files WHERE id = ?", (fid,)).fetchone()[0]
         self.assertEqual(self.cover(pid), stored)
 
     def test_keeps_earlier_real_photo(self):
-        pid, ids = self.new_print(["thumbnail-plaat-1.png", "own.jpg"])
+        pid, ids = self.new_print(["thumbnail-plate-1.png", "own.jpg"])
         self.save(pid)
         self.assertEqual(self.cover(pid), "s1.jpg")
 
@@ -304,7 +304,7 @@ class CameraRoutesTest(unittest.TestCase):
             db.execute("INSERT INTO prints (id, name, status, printer_id) VALUES (5, 'thumb', 'printing', 1), "
                        "(6, 'thumb gekozen', 'printing', 1)")
             db.execute("INSERT INTO files (id, print_id, kind, stored_name, original_name) VALUES "
-                       "(50, 5, 'photo', 't5.png', 'thumbnail-plaat-1.png'), (60, 6, 'photo', 't6.png', 'thumbnail-plaat-1.png')")
+                       "(50, 5, 'photo', 't5.png', 'thumbnail-plate-1.png'), (60, 6, 'photo', 't6.png', 'thumbnail-plate-1.png')")
             db.execute("UPDATE prints SET cover_file_id = 60 WHERE id = 6")
         html = self.c.get("/").get_data(as_text=True)
         self.assertEqual(html.count('class="livesnap"'), 2)                      # prints 1 and 5

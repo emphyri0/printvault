@@ -1,7 +1,23 @@
+# Secrets and local settings
 .env
+.env.*
+!.env.example
+
+# Data: database, uploads, backups, MQTT dumps (never commit these)
 data/
+uploads/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.bak
+*.bak-*
+
+# Python
 __pycache__/
 *.pyc
 venv/
 .venv/
+
+# Local design work
 mockups/

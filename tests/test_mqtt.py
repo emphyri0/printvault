@@ -276,15 +276,15 @@ class AppTest(unittest.TestCase):
 
     def test_access_code_not_rendered_and_kept(self):
         self.c.post("/printers/new", data={"name": "P2S", "ip": "192.0.2.10", "serial": "00M00A 000000000",
-                                           "access_code": "secret12", "mqtt_enabled": "1"})
+                                           "access_code": "12345678", "mqtt_enabled": "1"})
         html = self.c.get("/printers/1/edit").get_data(as_text=True)
-        self.assertNotIn("secret12", html)
+        self.assertNotIn("12345678", html)
         self.assertIn("set, leave empty to keep", html)
         self.c.post("/printers/1/edit", data={"name": "P2S", "ip": "192.0.2.10", "serial": "00M00A000000000",
                                               "access_code": "", "mqtt_enabled": "1"})
         with ml.connect_db(app.DB_PATH) as db:
             row = db.execute("SELECT serial, access_code, mqtt_enabled FROM printers").fetchone()
-        self.assertEqual(tuple(row), ("00M00A000000000", "secret12", 1))
+        self.assertEqual(tuple(row), ("00M00A000000000", "12345678", 1))
 
     def test_status_filter_has_unknown(self):
         with ml.connect_db(app.DB_PATH) as db:

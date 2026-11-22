@@ -356,9 +356,7 @@ def save_uploads(print_id, uploads):
 
 
 # Automatic thumbnails (from the slicer or MakerWorld); everything else is a real photo.
-# 'thumbnail-plaat-' is the name older versions gave slicer thumbnails; existing files still carry it.
-THUMB_SQL = ("(f.original_name LIKE 'thumbnail-plate-%' OR f.original_name LIKE 'thumbnail-plaat-%' "
-             "OR f.original_name LIKE 'makerworld-cover.%')")
+THUMB_SQL = "(f.original_name LIKE 'thumbnail-plate-%' OR f.original_name LIKE 'makerworld-cover.%')"
 # Cover photo: the chosen photo, else the first real photo, else a slicer/MakerWorld thumbnail.
 COVER_SQL = f"""COALESCE(
     (SELECT f.stored_name FROM files f WHERE f.id = p.cover_file_id AND f.print_id = p.id AND f.kind = 'photo'),
