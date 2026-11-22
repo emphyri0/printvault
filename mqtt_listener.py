@@ -21,6 +21,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from zoneinfo import ZoneInfo
 
 import bambu_errors
+import maintenance
+import notify
 from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code wordt ook door app gebruikt)
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
@@ -101,8 +103,9 @@ def connect_db(db_path):
 class PrinterTracker:
     """Volgt de status van één printer. Losstaand van MQTT zodat het testbaar is."""
 
-    def __init__(self, printer_id, printer_name, db_path, clock=now_local):
+    def __init__(self, printer_id, printer_name, db_path, clock=now_local, notifier=None):
         self.printer_id = printer_id
+        self.notifier = notifier  # callable(kind, title, message, tags, priority) of None
         self.printer_name = printer_name
         self.db_path = db_path
         self.clock = clock
@@ -191,7 +194,7 @@ class PrinterTracker:
         now = self.clock()
         err = self.state.get("print_error") if status == "mislukt" else None
         with connect_db(self.db_path) as db:
-            row = db.execute("SELECT started_at, notes FROM prints WHERE id = ?", (print_id,)).fetchone()
+            row = db.execute("SELECT name, started_at, notes FROM prints WHERE id = ?", (print_id,)).fetchone()
             if row is None:
                 return
             minutes = None
@@ -215,6 +218,23 @@ class PrinterTracker:
                 (status, now.isoformat(), minutes, int(err) if err else None, fail_note, fail_reason, notes, print_id))
             self._save_ams(db, print_id)
         log.info("printer %s: print %s %s", self.printer_id, print_id, status)
+        if seen_live:   # geen melding voor een einde dat pas na een herstart opgemerkt wordt
+            self._notify(row["name"], status, minutes, fail_note)
+
+    def _notify(self, name, status, minutes, fail_note):
+        if self.notifier is None:
+            return
+        try:
+            if status == "gelukt":
+                took = f" · {minutes // 60}u {minutes % 60:02d}m" if minutes is not None else ""
+                self.notifier("finish", f"Print klaar: {name}", f"{self.printer_name}{took}",
+                              tags=["white_check_mark"])
+            else:
+                self.notifier("failed", f"Print mislukt: {name}",
+                              f"{self.printer_name}\n{fail_note or 'Geen foutcode van de printer.'}",
+                              tags=["x"], priority=4)
+        except Exception:
+            log.exception("printer %s: melding versturen mislukt", self.printer_id)
 
     def _fail_info(self, err):
         """(toelichting, voorgestelde faalreden) voor een mislukte print, uit print_error en actieve HMS."""
@@ -352,6 +372,7 @@ class Supervisor:
 
     def __init__(self, db_path=DB_PATH):
         self.db_path = db_path
+        self.notifier = notify.Notifier(db_path)
         self.connections = {}   # printer_id -> (config-sleutel, PrinterConnection)
         self.trackers = {}      # printer_id -> PrinterTracker
 
@@ -375,7 +396,7 @@ class Supervisor:
         for pid, cfg in wanted.items():
             tracker = self.trackers.get(pid)
             if tracker is None:
-                tracker = self.trackers[pid] = PrinterTracker(pid, cfg["name"], self.db_path)
+                tracker = self.trackers[pid] = PrinterTracker(pid, cfg["name"], self.db_path, notifier=self.notifier)
             tracker.printer_name = cfg["name"]
             if pid not in self.connections:
                 conn = PrinterConnection(cfg, tracker)
@@ -391,6 +412,10 @@ class Supervisor:
                 self.sync()
             except Exception:
                 log.exception("printerinstellingen lezen mislukt")
+            try:
+                maintenance.check_and_notify(self.db_path, self.notifier)
+            except Exception:
+                log.exception("onderhoud controleren mislukt")
             time.sleep(RELOAD_SECONDS)
 
 

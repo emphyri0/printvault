@@ -13,6 +13,8 @@ from flask import (Flask, abort, flash, g, jsonify, redirect, render_template, r
 from werkzeug.utils import secure_filename
 
 import bambu_errors
+import maintenance
+import notify
 import slicer
 from bambu_errors import error_code
 
@@ -74,6 +76,21 @@ CREATE TABLE IF NOT EXISTS ams_readings (
     recorded_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ams_readings ON ams_readings(printer_id, ams_id, recorded_at);
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+CREATE TABLE IF NOT EXISTS maintenance_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    printer_id INTEGER NOT NULL REFERENCES printers(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    interval_hours REAL,
+    interval_days INTEGER,
+    last_done_at TEXT,
+    notified_at TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS files (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
@@ -132,6 +149,11 @@ def init_db():
         # Prints die de listener vroeger op 'opnieuw' zette omdat hij het einde miste, krijgen 'onbekend'.
         db.execute("UPDATE prints SET status = 'onbekend' WHERE status = 'opnieuw' AND source = 'mqtt' "
                    "AND notes LIKE '%Einde niet waargenomen%'")
+        # Eenmalig: standaard-onderhoudstaken voor de printers die er al zijn (zonder taken).
+        if db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_seeded', '1')").rowcount:
+            for (pid,) in db.execute("SELECT id FROM printers").fetchall():
+                if not db.execute("SELECT 1 FROM maintenance_tasks WHERE printer_id = ?", (pid,)).fetchone():
+                    maintenance.seed_defaults(db, pid)
 
 
 def ext_of(filename):
@@ -604,7 +626,9 @@ def printers():
            FROM printers pr LEFT JOIN prints p ON p.printer_id = pr.id
            GROUP BY pr.id ORDER BY pr.name"""
     ).fetchall()
-    return render_template("printers.html", printers=rows)
+    db = get_db()
+    due = {pr["id"]: sum(t["st"]["due"] for t in maintenance.tasks_for_printer(db, pr["id"])) for pr in rows}
+    return render_template("printers.html", printers=rows, due=due)
 
 
 @app.route("/printers/new", methods=["GET", "POST"])
@@ -664,6 +688,174 @@ def delete_printer(printer_id):
     db.commit()
     flash("Printer verwijderd. De prints zelf blijven bewaard.", "ok")
     return redirect(url_for("printers"))
+
+
+# ---------- Onderhoud ----------
+
+def get_printer(printer_id):
+    pr = get_db().execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
+    if pr is None:
+        abort(404)
+    return pr
+
+
+def get_task(task_id):
+    t = get_db().execute("SELECT * FROM maintenance_tasks WHERE id = ?", (task_id,)).fetchone()
+    if t is None:
+        abort(404)
+    return t
+
+
+def task_from_form(form):
+    hours = num(form.get("interval_hours"))
+    days = num(form.get("interval_days"), int)
+    data = {"name": form.get("name", "").strip()[:200],
+            "interval_hours": hours if hours and hours > 0 else None,
+            "interval_days": days if days and days > 0 else None,
+            "notes": form.get("notes", "").strip()}
+    done = form.get("last_done_at", "").strip()
+    if done:
+        try:
+            data["last_done_at"] = datetime.fromisoformat(done).replace(tzinfo=maintenance.TZ, second=0).isoformat()
+        except ValueError:
+            pass
+    return data
+
+
+def task_errors(data):
+    if not data["name"]:
+        return "Geef de taak een naam."
+    if not data["interval_hours"] and not data["interval_days"]:
+        return "Geef een interval in printuren en/of dagen."
+    return None
+
+
+@app.template_filter("localinput")
+def localinput(iso):
+    """ISO-tijd → waarde voor <input type=datetime-local> in de lokale tijdzone."""
+    try:
+        return maintenance.parse_time(iso).astimezone(maintenance.TZ).strftime("%Y-%m-%dT%H:%M")
+    except (TypeError, ValueError):
+        return ""
+
+
+@app.route("/printers/<int:printer_id>/onderhoud", methods=["GET", "POST"])
+def printer_maintenance(printer_id):
+    pr = get_printer(printer_id)
+    db = get_db()
+    if request.method == "POST":
+        data = task_from_form(request.form)
+        error = task_errors(data)
+        if error:
+            flash(error, "warn")
+        else:
+            data.setdefault("last_done_at", maintenance.now_local().isoformat())
+            data["printer_id"] = printer_id
+            db.execute(f"INSERT INTO maintenance_tasks ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
+                       list(data.values()))
+            db.commit()
+            flash("Onderhoudstaak toegevoegd.", "ok")
+        return redirect(url_for("printer_maintenance", printer_id=printer_id))
+    return render_template("maintenance.html", pr=pr, tasks=maintenance.tasks_for_printer(db, printer_id),
+                           now=localinput(maintenance.now_local().isoformat()))
+
+
+@app.route("/printers/<int:printer_id>/onderhoud/standaard", methods=["POST"])
+def seed_maintenance(printer_id):
+    get_printer(printer_id)
+    db = get_db()
+    maintenance.seed_defaults(db, printer_id)
+    db.commit()
+    flash("Standaardtaken toegevoegd. Pas de intervallen gerust aan.", "ok")
+    return redirect(url_for("printer_maintenance", printer_id=printer_id))
+
+
+@app.route("/onderhoud/<int:task_id>/edit", methods=["GET", "POST"])
+def edit_maintenance(task_id):
+    t = get_task(task_id)
+    pr = get_printer(t["printer_id"])
+    if request.method == "POST":
+        data = task_from_form(request.form)
+        error = task_errors(data)
+        if error:
+            flash(error, "warn")
+            return render_template("maintenance_form.html", t={**dict(t), **data}, pr=pr)
+        db = get_db()
+        db.execute(f"UPDATE maintenance_tasks SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
+                   [*data.values(), task_id])
+        db.commit()
+        flash("Onderhoudstaak opgeslagen.", "ok")
+        return redirect(url_for("printer_maintenance", printer_id=pr["id"]))
+    return render_template("maintenance_form.html", t=t, pr=pr)
+
+
+@app.route("/onderhoud/<int:task_id>/done", methods=["POST"])
+def done_maintenance(task_id):
+    t = get_task(task_id)
+    db = get_db()
+    db.execute("UPDATE maintenance_tasks SET last_done_at = ?, notified_at = NULL WHERE id = ?",
+               (maintenance.now_local().isoformat(), task_id))
+    db.commit()
+    flash(f"'{t['name']}' gemarkeerd als uitgevoerd.", "ok")
+    return redirect(url_for("printer_maintenance", printer_id=t["printer_id"]))
+
+
+@app.route("/onderhoud/<int:task_id>/delete", methods=["POST"])
+def delete_maintenance(task_id):
+    t = get_task(task_id)
+    db = get_db()
+    db.execute("DELETE FROM maintenance_tasks WHERE id = ?", (task_id,))
+    db.commit()
+    flash("Onderhoudstaak verwijderd.", "ok")
+    return redirect(url_for("printer_maintenance", printer_id=t["printer_id"]))
+
+
+# ---------- Instellingen (ntfy) ----------
+
+@app.route("/instellingen", methods=["GET", "POST"])
+def settings():
+    db = get_db()
+    cfg = notify.load_settings(db)
+    if request.method == "POST":
+        f = request.form
+        url = f.get("ntfy_url", "").strip()
+        topic = f.get("ntfy_topic", "").strip()
+        values = {"ntfy_url": url, "ntfy_topic": topic}
+        problems = []
+        if url and not notify.URL_RE.match(url):
+            problems.append("De ntfy-URL moet met http:// of https:// beginnen (bv. https://ntfy.sh).")
+            values.pop("ntfy_url")
+        if topic and not notify.TOPIC_RE.match(topic):
+            problems.append("Een topic mag alleen letters, cijfers, - en _ bevatten (max. 64 tekens).")
+            values.pop("ntfy_topic")
+        token = f.get("ntfy_token", "").strip()
+        if f.get("clear_token"):
+            values["ntfy_token"] = ""
+        elif token:
+            values["ntfy_token"] = token
+        for key in notify.KINDS.values():
+            values[key] = "1" if f.get(key) else "0"
+        notify.save_settings(db, values)
+        db.commit()
+        for p in problems:
+            flash(p, "warn")
+        flash("Instellingen opgeslagen." + (" Andere velden zijn niet gewijzigd." if problems else ""),
+              "warn" if problems else "ok")
+        return redirect(url_for("settings"))
+    public = {k: v for k, v in cfg.items() if k != "ntfy_token"}
+    public["has_token"] = bool(cfg.get("ntfy_token"))
+    return render_template("settings.html", cfg=public)
+
+
+@app.route("/instellingen/test", methods=["POST"])
+def settings_test():
+    cfg = notify.load_settings(get_db())
+    try:
+        notify.post(cfg, "Printvault: testmelding", "Meldingen komen goed aan.", tags=["tada"])
+        flash("Testmelding verstuurd.", "ok")
+    except notify.NotifyError as e:
+        flash(str(e), "warn")
+    return redirect(url_for("settings"))
 
 
 # ---------- Live status (van de MQTT-listener) ----------

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Instellingen · Printvault{% endblock %}
+{% block content %}
+<div class="head"><h1>Instellingen</h1></div>
+<form class="form" method="post">
+  <fieldset class="wide mqtt">
+    <legend>Meldingen via ntfy</legend>
+    <p class="hint">Installeer de ntfy-app en abonneer je op hetzelfde topic. Op de openbare server ntfy.sh kan iedereen die het topic kent meelezen: kies een lang, moeilijk te raden topic of gebruik een eigen server met token.</p>
+    <label>Server-URL<input name="ntfy_url" value="{{ cfg.ntfy_url or '' }}" placeholder="https://ntfy.sh" autocomplete="off"></label>
+    <label>Topic<input name="ntfy_topic" value="{{ cfg.ntfy_topic or '' }}" placeholder="bv. printvault-x7k2m9" autocomplete="off"></label>
+    <label>Access token (optioneel)<input type="password" name="ntfy_token" value="" autocomplete="new-password"
+      placeholder="{{ 'ingesteld, leeg laten om te behouden' if cfg.has_token else 'tk_…' }}"></label>
+    {% if cfg.has_token %}<span class="check"><input type="checkbox" name="clear_token" value="1"> Token wissen</span>{% endif %}
+  </fieldset>
+  <fieldset class="wide mqtt">
+    <legend>Wanneer?</legend>
+    <span class="check"><input type="checkbox" name="notify_finish" value="1" {% if cfg.notify_finish == '1' %}checked{% endif %}> Print klaar</span>
+    <span class="check"><input type="checkbox" name="notify_failed" value="1" {% if cfg.notify_failed == '1' %}checked{% endif %}> Print mislukt (met foutcode als tekst)</span>
+    <span class="check"><input type="checkbox" name="notify_maintenance" value="1" {% if cfg.notify_maintenance == '1' %}checked{% endif %}> Onderhoud vervallen</span>
+  </fieldset>
+  <div class="actions wide">
+    <button class="btn primary">Opslaan</button>
+  </div>
+</form>
+<form method="post" action="{{ url_for('settings_test') }}" class="testsend">
+  <button class="btn" {% if not (cfg.ntfy_url and cfg.ntfy_topic) %}disabled title="Sla eerst een URL en topic op"{% endif %}>Testmelding sturen</button>
+</form>
+{% endblock %}

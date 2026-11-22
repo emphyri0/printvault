@@ -20,6 +20,7 @@
       {% if pr.notes %}<p class="pnotes">{{ pr.notes }}</p>{% endif %}
       <div class="actions">
         <a class="btn" href="{{ url_for('index', printer=pr.id) }}">Prints</a>
+        <a class="btn" href="{{ url_for('printer_maintenance', printer_id=pr.id) }}">Onderhoud{% if due[pr.id] %} <span class="badge mislukt">{{ due[pr.id] }}</span>{% endif %}</a>
         <a class="btn ghost" href="{{ url_for('edit_printer', printer_id=pr.id) }}">Bewerk</a>
       </div>
     </div>

@@ -168,3 +168,16 @@ fieldset.fail { border: 1px dashed var(--danger); border-radius: 10px; padding: 
 .failspec { border-color: var(--danger) !important; }
 .failspec dd a { text-decoration: none; }
 .failnote { display: block; font-weight: 400; font-size: .85rem; color: var(--muted); }
+
+/* onderhoud */
+.tasks { list-style: none; padding: 0; margin: 0 0 1.5rem; display: grid; gap: .6rem; }
+.task { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .75rem;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1rem; }
+.task.due { border-color: var(--danger); }
+.task .taskmain { flex: 1 1 16rem; min-width: 0; }
+.task .bar { margin: .45rem 0 .3rem; }
+.task .bar span { background: var(--accent); }
+.task.due .bar span { background: var(--danger); }
+.task form { display: inline; }
+.testsend { margin-top: 1rem; }
+h2 { font-size: 1.1rem; margin: 1.5rem 0 .75rem; }
