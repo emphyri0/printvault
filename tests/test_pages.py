@@ -182,6 +182,20 @@ class PagesTest(unittest.TestCase):
             self.assertTrue(app.bambu_studio_links({"id": 8, "original_name": "日本.3mf"})["open"]
                             .endswith("%26name%3Dprintvault-8.3mf"))
 
+    def test_proxy_headers(self):
+        headers = {"X-Forwarded-Proto": "https", "X-Forwarded-Host": "printvault.example"}
+        # default: headers ignored
+        html = self.c.get("/print/1", headers=headers).get_data(as_text=True)
+        self.assertIn("bambustudio://open?file=http%3A%2F%2Flocalhost%2Fdownload%2F11", html)
+        original = app.app.wsgi_app
+        app.app.wsgi_app = app.apply_proxy_fix(original, 1)
+        try:
+            html = self.c.get("/print/1", headers=headers).get_data(as_text=True)
+            self.assertIn("bambustudio://open?file=https%3A%2F%2Fprintvault.example%2Fdownload%2F11", html)
+        finally:
+            app.app.wsgi_app = original
+        self.assertIs(app.apply_proxy_fix(original, 0), original)
+
     def test_thumb_route(self):
         os.makedirs(os.path.join(app.UPLOAD_DIR, thumbs.SUBDIR), exist_ok=True)
         with open(os.path.join(app.UPLOAD_DIR, "p1.jpg"), "wb") as fh:
@@ -223,6 +237,11 @@ class HelpersTest(unittest.TestCase):
         self.assertEqual(app.css_color(" Black "), "black")
         for bad in ("red;background:url(http://x)", "url(x)", "#12", "", None, "light blue"):
             self.assertIsNone(app.css_color(bad), bad)
+
+    def test_trusted_proxies_setting(self):
+        self.assertEqual([app.trusted_proxies(v) for v in (None, "", "0", "1", " 2 ", "-1")], [0, 0, 0, 1, 2, 0])
+        with self.assertLogs(app.app.logger, "WARNING"):
+            self.assertEqual(app.trusted_proxies("yes"), 0)
 
     def test_icons(self):
         self.assertIn('<use href="#i-clock">', str(icons.icon("clock")))

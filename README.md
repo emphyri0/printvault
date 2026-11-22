@@ -125,6 +125,12 @@ Every photo gets two smaller WebP versions in `data/uploads/thumbs/`: 600 px wid
 
 Every push and pull request runs the tests: `.forgejo/workflows/tests.yml` (Forgejo Actions, runner label `ubuntu-latest`) and `.github/workflows/tests.yml` (GitHub Actions) with the same steps. Both run in a `python:3.12-slim` container (the Python of the Dockerfile), install ffmpeg and the requirements, and run `python -m unittest discover -s tests` with `REQUIRE_FFMPEG=1`.
 
+## Behind a reverse proxy
+
+Absolute links (such as the download URL that **Open in Bambu Studio** hands to Bambu Studio) use the scheme and host of the request. Behind a reverse proxy that terminates HTTPS, the app otherwise sees `http://` and its internal address. Set `TRUSTED_PROXIES` in `.env` to the number of proxies in front of the app (usually `1`); the app then reads `X-Forwarded-Proto` and `X-Forwarded-Host` through werkzeug's `ProxyFix`. The proxy must set those headers (Caddy and Traefik do by default; nginx needs `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-Host $host;`).
+
+Default `0`: the headers are ignored. Only switch it on when the app can be reached exclusively through the proxy; if clients can also reach port 8100 directly, they can send fake headers and make Printvault build links to another host. Restart after a change (`docker compose up -d`).
+
 ## Data
 
 Everything is in `./data`: the SQLite database `printvault.db` and the uploads in `uploads/`. Back up that folder and you have everything.

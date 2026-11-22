@@ -13,6 +13,7 @@ from datetime import date, datetime
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 import bambu_errors
@@ -49,6 +50,26 @@ LABELS = {
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "200")) * 1024 * 1024
+
+
+def trusted_proxies(value):
+    """TRUSTED_PROXIES → number of reverse proxies in front of the app (0 = off, the default)."""
+    try:
+        n = int(str(value or "0").strip())
+    except ValueError:
+        app.logger.warning("TRUSTED_PROXIES=%r is not a number; proxy headers are ignored", value)
+        return 0
+    return max(0, n)
+
+
+def apply_proxy_fix(wsgi_app, n):
+    """Behind n trusted reverse proxies: take the scheme and host from X-Forwarded-Proto and
+    X-Forwarded-Host, so absolute links (e.g. for Bambu Studio) use the address the browser used.
+    Only switch this on when every request passes through the proxy: otherwise anyone can fake them."""
+    return ProxyFix(wsgi_app, x_for=0, x_proto=n, x_host=n, x_port=0, x_prefix=0) if n else wsgi_app
+
+
+app.wsgi_app = apply_proxy_fix(app.wsgi_app, trusted_proxies(os.environ.get("TRUSTED_PROXIES")))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS prints (
