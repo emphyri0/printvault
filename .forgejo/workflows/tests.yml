@@ -6,7 +6,7 @@ on: [push, pull_request]
 
 jobs:
   tests:
-    runs-on: docker
+    runs-on: ubuntu-latest
     container:
       image: python:3.12-slim   # same Python as the Dockerfile
     steps:

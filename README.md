@@ -116,7 +116,7 @@ Every photo gets two smaller WebP versions in `data/uploads/thumbs/`: 600 px wid
 
 ## Continuous integration
 
-Every push and pull request runs the tests: `.forgejo/workflows/tests.yml` (Forgejo Actions, runner label `docker`) and `.github/workflows/tests.yml` (GitHub Actions) with the same steps. Both run in a `python:3.12-slim` container (the Python of the Dockerfile), install ffmpeg and the requirements, and run `python -m unittest discover -s tests` with `REQUIRE_FFMPEG=1`.
+Every push and pull request runs the tests: `.forgejo/workflows/tests.yml` (Forgejo Actions, runner label `ubuntu-latest`) and `.github/workflows/tests.yml` (GitHub Actions) with the same steps. Both run in a `python:3.12-slim` container (the Python of the Dockerfile), install ffmpeg and the requirements, and run `python -m unittest discover -s tests` with `REQUIRE_FFMPEG=1`.
 
 ## Data
 
