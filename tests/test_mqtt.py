@@ -5,7 +5,6 @@ Run:  python3 -m unittest discover -s tests
 import json
 import re
 import os
-import sqlite3
 import sys
 import unittest
 from unittest import mock

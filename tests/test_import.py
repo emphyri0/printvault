@@ -12,6 +12,8 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testenv  # noqa: E402
 import app  # noqa: E402
+import uploads  # noqa: E402
+import makerworld  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
 import slicer  # noqa: E402
 
@@ -36,7 +38,7 @@ def settings(**cfg):
 class Base(unittest.TestCase):
     def setUp(self):
         testenv.reset(uploads=True)
-        add = mock.patch.object(app.THUMBS, "add")
+        add = mock.patch.object(uploads.THUMBS, "add")
         add.start()
         self.addCleanup(add.stop)
         self.c = app.app.test_client()
@@ -191,8 +193,8 @@ class FileNameTest(Base):
                               ("../../etc/x.3mf", "x.3mf"), ("C:\\dir\\y.3mf", "y.3mf"), ("a\x00b\n\u202ec.3mf", "abc.3mf"),
                               (".3mf", "file.3mf"), ("...3mf", "file.3mf"), ("X.3MF", "X.3mf"),
                               ('q"<>|?*.3mf', "q______.3mf")):
-            self.assertEqual(app.clean_name(given, "3mf"), stored, given)
-        self.assertEqual(len(app.clean_name("é" * 500 + ".3mf", "3mf")), 150)
+            self.assertEqual(uploads.clean_name(given, "3mf"), stored, given)
+        self.assertEqual(len(uploads.clean_name("é" * 500 + ".3mf", "3mf")), 150)
 
     def test_unicode_name_works_everywhere(self):
         p = self.upload("日本.3mf", settings(layer_height="0.2"))
@@ -232,7 +234,7 @@ class MakerWorldTest(Base):
     def get(self, design, cover=PNG):
         def fake(url, _limit):
             return cover if "bblmw" in url else (design if isinstance(design, bytes) else json.dumps(design).encode())
-        return mock.patch.object(app, "_http_get", side_effect=fake)
+        return mock.patch.object(makerworld, "_http_get", side_effect=fake)
 
     def test_import(self):
         with self.get(DESIGN):
@@ -303,7 +305,7 @@ class MakerWorldTest(Base):
 
     def test_failed_fetch_is_tried_again(self):
         self.c.post("/print/new", data={"name": "x"})
-        with mock.patch.object(app, "_http_get", side_effect=OSError("down")):
+        with mock.patch.object(makerworld, "_http_get", side_effect=OSError("down")):
             self.edit(source_url=MW)
         self.assertEqual(self.one("SELECT source_url FROM prints")["source_url"], MW)
         with self.get(DESIGN):

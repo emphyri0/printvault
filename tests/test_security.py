@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testenv  # noqa: E402
 import app  # noqa: E402
+import uploads  # noqa: E402
+import makerworld  # noqa: E402
 import notify  # noqa: E402
 import security  # noqa: E402
 import slicer  # noqa: E402
@@ -31,7 +33,7 @@ PNG = b"\x89PNG\r\n\x1a\nimage"
 class Base(unittest.TestCase):
     def setUp(self):
         testenv.reset()
-        add = mock.patch.object(app.THUMBS, "add")
+        add = mock.patch.object(uploads.THUMBS, "add")
         add.start()
         self.addCleanup(add.stop)
         self.c = app.app.test_client()
@@ -214,16 +216,16 @@ class RedirectTest(unittest.TestCase):
         self.addCleanup(target.close)
         self.addCleanup(source.close)
         with self.assertRaises(urllib.error.HTTPError):
-            app._http_get(source.url, 1000)
+            makerworld._http_get(source.url, 1000)
         self.assertEqual(target.seen, [])
 
     def test_allowed_redirect_targets(self):
         for url in ("https://makerworld.com/x", "https://www.makerworld.com/x", "https://makerworld.bblmw.com/a.jpg"):
-            self.assertTrue(app.mw_redirect_allowed(url), url)
+            self.assertTrue(makerworld.redirect_allowed(url), url)
         for url in ("http://makerworld.com/x", "https://makerworld.com.evil.example/", "https://127.0.0.1/",
                     "https://evilmakerworld.com/", "file:///etc/passwd", "https://user@evil.example/makerworld.com",
                     "https://makerworld.com:8080/", "https://evilbblmw.com/"):
-            self.assertFalse(app.mw_redirect_allowed(url), url)
+            self.assertFalse(makerworld.redirect_allowed(url), url)
 
     def test_error_text_of_other_servers_is_not_shown(self):
         source = _Server(500, body=b"internal secret page")

@@ -241,7 +241,6 @@ class Camera:
         self.proc = None
         self.stream = None
         self.closed = False
-        self.error = None
 
     # ---------- for viewers ----------
 
@@ -317,7 +316,6 @@ class Camera:
         self.frame = frame
         self.frame_no += 1
         self.frame_at = time.monotonic()
-        self.error = None
         self.cond.notify_all()
 
     def _stream_once(self):
@@ -327,8 +325,7 @@ class Camera:
             proc = subprocess.Popen(ffmpeg_cmd(self.url), stdin=subprocess.DEVNULL,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except FileNotFoundError:
-            self.error = "ffmpeg is not installed."
-            log.error("camera: %s", self.error)
+            log.error("camera: ffmpeg is not installed.")
             return
         with self.cond:
             self.proc = proc
@@ -357,9 +354,7 @@ class Camera:
                 self.proc = None
         if proc.returncode not in (0, -15, -9) and not self.closed:
             last = errors[-1].decode(errors="replace").strip() if errors else f"code {proc.returncode}"
-            self.error = redact(last, self.secret)
-            log.warning("camera: ffmpeg exited: %s", self.error)
-
+            log.warning("camera: ffmpeg exited: %s", redact(last, self.secret))
 
     def _stream_jpeg(self):
         stream = JpegStream(self.ip, self.secret)
@@ -376,8 +371,7 @@ class Camera:
                         break
         except CameraError as e:
             if not self.closed:
-                self.error = redact(e, self.secret)
-                log.warning("camera: %s", self.error)
+                log.warning("camera: %s", redact(e, self.secret))
         finally:
             stream.close()
             with self.cond:

@@ -10,6 +10,24 @@ DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "d
 UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 
+
+def connect(path):
+    con = sqlite3.connect(path, timeout=30)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys = ON")
+    return con
+
+
+def insert(con, table, data):
+    """Inserts {column: value} and returns the new id. Table and columns come from the code, never from input."""
+    return con.execute(f"INSERT INTO {table} ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
+                       list(data.values())).lastrowid
+
+
+def update(con, table, row_id, data):
+    con.execute(f"UPDATE {table} SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?", [*data.values(), row_id])
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS prints (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

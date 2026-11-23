@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testenv  # noqa: E402
 import app  # noqa: E402
+import uploads  # noqa: E402
 import maintenance  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
 import notify  # noqa: E402
@@ -333,7 +334,7 @@ class FilesAfterCommitTest(Base):
             db.execute("UPDATE printers SET photo = 'p.jpg'")
         for name in ("a.jpg", "p.jpg"):
             Path(app.UPLOAD_DIR, name).write_bytes(b"\xff\xd8\xff")
-        add = mock.patch.object(app.THUMBS, "add")
+        add = mock.patch.object(uploads.THUMBS, "add")
         add.start()
         self.addCleanup(add.stop)
 

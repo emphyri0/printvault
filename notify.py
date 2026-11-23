@@ -17,7 +17,6 @@ log = logging.getLogger("printvault.notify")
 
 # kind of notification -> setting that turns it on/off
 KINDS = {"finish": "notify_finish", "failed": "notify_failed", "maintenance": "notify_maintenance"}
-SETTING_KEYS = ("ntfy_url", "ntfy_topic", "ntfy_token", *KINDS.values())
 TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 URL_RE = re.compile(r"^https?://[^\s/?#]+(/[^\s?#]*)?$", re.I)
 

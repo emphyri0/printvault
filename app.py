@@ -1,5 +1,3 @@
-import html
-import http.client
 import ipaddress
 import json
 import math
@@ -10,7 +8,6 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-import uuid
 from datetime import date, datetime
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
@@ -25,17 +22,15 @@ import bambu_status
 import camera
 import icons
 import maintenance
+import makerworld
 import notify
 import security
 import slicer
 import thumbs
+import uploads
 from bambu_errors import error_code
-from db import DB_PATH, UPLOAD_DIR, init_db
+from db import DB_PATH, UPLOAD_DIR, connect, init_db, insert, update
 
-THUMBS = thumbs.Worker(UPLOAD_DIR)   # WebP thumbnails, made in the background
-
-PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
-MODEL_EXT = {"3mf", "stl", "step", "stp", "obj", "gcode"}
 # Internal values are lowercase snake_case; what the UI shows comes from LABELS.
 # "unknown": the listener did not see the print end. "reprint": deliberately to be printed again.
 STATUSES = ["planned", "printing", "succeeded", "failed", "unknown", "reprint"]
@@ -88,9 +83,7 @@ app.wsgi_app = apply_proxy_fix(app.wsgi_app, trusted_proxies(os.environ.get("TRU
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH, timeout=30)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        g.db = connect(DB_PATH)
     return g.db
 
 
@@ -99,10 +92,6 @@ def close_db(_exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
-
-
-def ext_of(filename):
-    return filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
 
 def num(value, cast=float):
@@ -198,41 +187,10 @@ def drop_unknown_printer(data):
         flash("The chosen printer no longer exists; the print was saved without a printer.", "warn")
 
 
-def clean_name(filename, ext):
-    """Safe file name for display and download. Letters of every script stay; folders, control characters
-    and characters that Windows refuses do not. Always ends in .<ext>."""
-    name = "".join(c for c in re.split(r"[\\/]", filename)[-1] if c.isprintable())
-    stem = re.sub(rf"\.?{re.escape(ext)}$", "", re.sub(r'[<>:"|?*]', "_", name), flags=re.I).strip(" .")
-    return f"{(stem or 'file')[:150 - len(ext) - 1]}.{ext}"
-
-
-def download_name(f):
-    """original_name, with the extension that older versions lost for names like '日本.3mf'."""
-    name, ext = f["original_name"], ext_of(f["stored_name"])
-    return name if ext_of(name) or not ext else f"{name}.{ext}"
-
-
 def print_name(filename):
     """'my_part.gcode.3mf' → 'my part'."""
     stem = re.sub(r"(\.gcode)?\.(3mf|gcode)$", "", filename, flags=re.I)
     return stem.replace("_", " ").strip()[:200] or "Untitled print"
-
-
-def store_bytes(print_id, kind, content, ext, original_name):
-    if kind == "photo":
-        ext = thumbs.sniff(content)
-        if ext is None:
-            return None
-    stored = f"{uuid.uuid4().hex}.{ext}"
-    with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
-        fh.write(content)
-    cur = get_db().execute(
-        "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
-        (print_id, kind, stored, original_name, len(content)),
-    )
-    if kind == "photo":
-        THUMBS.add(stored)
-    return cur.lastrowid
 
 
 def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite_name=False):
@@ -250,15 +208,14 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
         notes = [l for l in (p["notes"] or "").splitlines() if not l.startswith("Filament (slicer):")]
         fields["notes"] = "\n".join([line] + notes).strip()
     if fields:
-        db.execute(f"UPDATE prints SET {', '.join(k + ' = ?' for k in fields)} WHERE id = ?",
-                   [*fields.values(), print_id])
+        update(db, "prints", print_id, fields)
     if thumb:
         content, ext = thumb
         thumb_name = f"thumbnail-plate-{plate_index}.{ext}"
         exists = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name = ?",
                             (print_id, thumb_name)).fetchone()
         if not exists:
-            store_bytes(print_id, "photo", content, ext, thumb_name)
+            uploads.add_photo(db, print_id, content, thumb_name)
     db.commit()
     found = [label for k, label in SLICER_FIELDS.items() if fields.get(k) not in (None, "")]
     plate_info = (f" This file has {len(plates)} plates; plate {plate_index} was used."
@@ -266,42 +223,8 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
     return found, plate_info
 
 
-def photo_type(upload):
-    """Extension that matches the content of an uploaded photo, or None when it is not a photo."""
-    ext = thumbs.sniff(upload.stream.read(thumbs.SNIFF_BYTES))
-    upload.stream.seek(0)
-    return ext
-
-
-def save_uploads(print_id, uploads):
-    db = get_db()
-    skipped = []
-    for f in uploads:
-        if not f or not f.filename:
-            continue
-        ext = ext_of(f.filename)
-        original_name = clean_name(f.filename, ext)
-        if ext in PHOTO_EXT:
-            kind = "photo"
-            ext = photo_type(f)
-            if ext is None:
-                skipped.append(f.filename)
-                continue
-        elif ext in MODEL_EXT:
-            kind = "model"
-        else:
-            skipped.append(f.filename)
-            continue
-        stored = f"{uuid.uuid4().hex}.{ext}"
-        path = os.path.join(UPLOAD_DIR, stored)
-        f.save(path)
-        db.execute(
-            "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
-            (print_id, kind, stored, original_name, os.path.getsize(path)),
-        )
-        if kind == "photo":
-            THUMBS.add(stored)
-    db.commit()
+def save_uploads(print_id, files):
+    skipped = uploads.save(get_db(), print_id, files)
     if skipped:
         flash("Skipped (unknown file type or not a real photo): " + ", ".join(skipped), "warn")
 
@@ -406,7 +329,7 @@ def inject_lists():
     try:
         db = get_db()
         printers = db.execute("SELECT id, name FROM printers ORDER BY name").fetchall()
-        due = maintenance_due_total(db, printers)
+        due = sum(maintenance_due(db, pr["id"]) for pr in printers)
     except sqlite3.Error as e:   # the error page is rendered with this too
         app.logger.error("page rendered without the database: %s", e)
         printers, due = [], 0
@@ -415,8 +338,8 @@ def inject_lists():
             "status_icons": icons.STATUS_ICONS, "maintenance_due": due, **models}
 
 
-def maintenance_due_total(db, printers):
-    return sum(t["st"]["due"] for pr in printers for t in maintenance.tasks_for_printer(db, pr["id"]))
+def maintenance_due(db, printer_id):
+    return sum(t["st"]["due"] for t in maintenance.tasks_for_printer(db, printer_id))
 
 
 app.add_template_global(icons.icon, "icon")
@@ -517,9 +440,7 @@ def index():
     stats = db.execute(
         """SELECT COUNT(*) AS n,
                   COALESCE(SUM(filament_g), 0) AS grams,
-                  COALESCE(SUM(print_time_min), 0) AS minutes,
-                  SUM(status = 'succeeded') AS ok,
-                  SUM(status = 'failed') AS failed
+                  COALESCE(SUM(print_time_min), 0) AS minutes
            FROM prints"""
     ).fetchone()
     nozzles = [r[0] for r in db.execute("SELECT DISTINCT nozzle FROM prints WHERE nozzle > 0 ORDER BY nozzle")]
@@ -548,17 +469,14 @@ def new_print():
         data = form_to_print(request.form)
         if not data["name"]:
             flash("Give the print a name.", "warn")
-            return render_template("form.html", p=data, materials=MATERIALS, statuses=STATUSES)
+            return render_template("form.html", p=data)
         drop_unknown_printer(data)
         db = get_db()
-        cur = db.execute(
-            f"INSERT INTO prints ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
-            list(data.values()),
-        )
+        print_id = insert(db, "prints", data)
         db.commit()
-        save_uploads(cur.lastrowid, request.files.getlist("files"))
+        save_uploads(print_id, request.files.getlist("files"))
         flash("Print saved.", "ok")
-        return redirect(url_for("show_print", print_id=cur.lastrowid))
+        return redirect(url_for("show_print", print_id=print_id))
     defaults = {"status": "succeeded", "printed_on": date.today().isoformat()}
     only = get_db().execute("SELECT id FROM printers").fetchall()
     if len(only) == 1:
@@ -570,30 +488,27 @@ def new_print():
 def import_print():
     url = request.form.get("url", "").strip()
     try:
-        data, cover = fetch_makerworld(url)
-    except MakerWorldError as e:
+        data, cover = makerworld.fetch(url, MATERIALS)
+    except makerworld.MakerWorldError as e:
         flash(str(e), "warn")
         return redirect(url_for("new_print"))
     db = get_db()
-    cur = db.execute(
-        f"INSERT INTO prints ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
-        list(data.values()),
-    )
+    print_id = insert(db, "prints", data)
     if cover:
-        save_makerworld_cover(db, cur.lastrowid, cover)
+        add_cover(db, print_id, cover)
     db.commit()
     flash("Imported from MakerWorld. Fill in what is missing and upload the 3mf file if you have it.", "ok")
-    return redirect(url_for("edit_print", print_id=cur.lastrowid))
+    return redirect(url_for("edit_print", print_id=print_id))
 
 
 @app.route("/print/import-file", methods=["POST"])
 def import_file():
     upload = request.files.get("file")
-    if not upload or not upload.filename or ext_of(upload.filename) not in {"3mf", "gcode"}:
+    if not upload or not upload.filename or uploads.ext_of(upload.filename) not in {"3mf", "gcode"}:
         flash("Choose a .3mf or .gcode file.", "warn")
         return redirect(url_for("new_print"))
     db = get_db()
-    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'planned')", (print_name(clean_name(upload.filename, ext_of(upload.filename))),))
+    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'planned')", (print_name(uploads.clean_name(upload.filename, uploads.ext_of(upload.filename))),))
     print_id = cur.lastrowid
     save_uploads(print_id, [upload])
     f = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id DESC LIMIT 1", (print_id,)).fetchone()
@@ -613,7 +528,7 @@ def import_file():
 @app.route("/file/<int:file_id>/apply", methods=["POST"])
 def apply_file(file_id):
     f = get_db().execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
-    if f is None or ext_of(f["stored_name"]) not in {"3mf", "gcode"}:
+    if f is None or uploads.ext_of(f["stored_name"]) not in {"3mf", "gcode"}:
         abort(404)
     try:
         found, plate_info = apply_slicer_file(f["print_id"], os.path.join(UPLOAD_DIR, f["stored_name"]),
@@ -638,11 +553,11 @@ def show_print(print_id):
                 bambu_status.stage_group(r["stage"]) if r["stage"] is not None else None, r["percent"], r["layer"]]
                for r in db.execute("SELECT * FROM print_samples WHERE print_id = ? ORDER BY recorded_at", (print_id,))]
     models = [f for f in files if f["kind"] == "model"]
-    threemf = [f for f in models if ext_of(f["stored_name"]) == "3mf"]
+    threemf = [f for f in models if uploads.ext_of(f["stored_name"]) == "3mf"]
     return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams, samples=samples,
                            photos=[f for f in files if f["kind"] == "photo"], models=models,
                            studio=bambu_studio_links(threemf[-1]) if threemf else None,
-                           makerworld_url=p["source_url"] if MW_URL.match(p["source_url"] or "") else None)
+                           makerworld_url=p["source_url"] if makerworld.URL.match(p["source_url"] or "") else None)
 
 
 def bambu_studio_links(f):
@@ -671,23 +586,19 @@ def edit_print(print_id):
         data = form_to_print(request.form)
         if not data["name"]:
             flash("Give the print a name.", "warn")
-            return render_template("form.html", p={**data, "id": print_id}, base=request.form.get("base"),
-                                   materials=MATERIALS, statuses=STATUSES)
+            return render_template("form.html", p={**data, "id": print_id}, base=request.form.get("base"))
         keep_changes(data, request.form.get("base"), p)
         drop_unknown_printer(data)
         db = get_db()
         mw_msg = enrich_from_makerworld(db, print_id, p, data)
-        db.execute(
-            f"UPDATE prints SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
-            [*data.values(), print_id],
-        )
+        update(db, "prints", print_id, data)
         db.commit()
         save_uploads(print_id, request.files.getlist("files"))
         flash("Changes saved.", "ok")
         if mw_msg:
             flash(*mw_msg)
         return redirect(url_for("show_print", print_id=print_id))
-    return render_template("form.html", p=p, base=form_base(p), materials=MATERIALS, statuses=STATUSES)
+    return render_template("form.html", p=p, base=form_base(p))
 
 
 @app.route("/print/<int:print_id>/delete", methods=["POST"])
@@ -698,7 +609,7 @@ def delete_print(print_id):
     db.execute("DELETE FROM prints WHERE id = ?", (print_id,))
     db.commit()
     for f in files:   # only once the database change is certain
-        remove_upload(f["stored_name"])
+        uploads.remove(f["stored_name"])
     flash("Print deleted.", "ok")
     return redirect(url_for("index"))
 
@@ -706,9 +617,9 @@ def delete_print(print_id):
 @app.route("/print/<int:print_id>/photos", methods=["POST"])
 def add_photos(print_id):
     get_print(print_id)
-    uploads = [f for f in request.files.getlist("photos") if f and f.filename]
-    photos = [f for f in uploads if ext_of(f.filename) in PHOTO_EXT]
-    if len(photos) < len(uploads):
+    chosen = [f for f in request.files.getlist("photos") if f and f.filename]
+    photos = [f for f in chosen if uploads.ext_of(f.filename) in uploads.PHOTO_EXT]
+    if len(photos) < len(chosen):
         flash("Only photos (jpg, png, webp, gif) can go here; other files were skipped.", "warn")
     if photos:
         save_uploads(print_id, photos)
@@ -735,7 +646,7 @@ def delete_file(file_id):
         abort(404)
     db.execute("DELETE FROM files WHERE id = ?", (file_id,))
     db.commit()
-    remove_upload(f["stored_name"])
+    uploads.remove(f["stored_name"])
     return redirect(url_for("show_print", print_id=f["print_id"]))
 
 
@@ -754,7 +665,7 @@ def thumb(size, stored_name):
                                    mimetype="image/webp", max_age=30 * 86400)
     if not os.path.isfile(os.path.join(UPLOAD_DIR, stored_name)):
         abort(404)
-    THUMBS.add(stored_name)
+    uploads.THUMBS.add(stored_name)
     resp = send_from_directory(UPLOAD_DIR, stored_name)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
@@ -777,7 +688,7 @@ def download(file_id):
     if f is None:
         abort(404)
     return send_from_directory(UPLOAD_DIR, f["stored_name"], as_attachment=True,
-                               download_name=download_name(f))
+                               download_name=uploads.download_name(f))
 
 
 # ---------- Printers ----------
@@ -824,35 +735,21 @@ def printer_from_form(form):
     }
 
 
+def printer_photo(upload):
+    """stored_name of an uploaded printer photo, or None."""
+    if not upload or not upload.filename:
+        return None
+    stored = uploads.save_printer_photo(upload)
+    if stored is None:
+        flash("Printer photo skipped: only jpg, png, webp or gif.", "warn")
+    return stored
+
+
 def public_printer(row_or_dict):
     """Printer data for the form, without the access code."""
     d = dict(row_or_dict)
     d["has_access_code"] = bool(d.pop("access_code", None))
     return d
-
-
-def save_printer_photo(upload):
-    """Stores an uploaded printer photo and returns its stored_name (or None)."""
-    if not upload or not upload.filename:
-        return None
-    ext = photo_type(upload) if ext_of(upload.filename) in PHOTO_EXT else None
-    if ext is None:
-        flash("Printer photo skipped: only jpg, png, webp or gif.", "warn")
-        return None
-    stored = f"{uuid.uuid4().hex}.{ext}"
-    upload.save(os.path.join(UPLOAD_DIR, stored))
-    THUMBS.add(stored)
-    return stored
-
-
-def remove_upload(stored_name):
-    if not stored_name:
-        return
-    try:
-        os.remove(os.path.join(UPLOAD_DIR, stored_name))
-    except FileNotFoundError:
-        pass
-    thumbs.remove(UPLOAD_DIR, stored_name)
 
 
 @app.route("/printers")
@@ -866,7 +763,7 @@ def printers():
            GROUP BY pr.id ORDER BY pr.name"""
     ).fetchall()
     db = get_db()
-    due = {pr["id"]: sum(t["st"]["due"] for t in maintenance.tasks_for_printer(db, pr["id"])) for pr in rows}
+    due = {pr["id"]: maintenance_due(db, pr["id"]) for pr in rows}
     cams = {pr["id"]: bambu_models.printer_camera(pr) for pr in rows}
     return render_template("printers.html", printers=rows, due=due, cams=cams)
 
@@ -879,11 +776,10 @@ def new_printer():
         if error:
             flash(error, "warn")
             return render_template("printer_form.html", pr=public_printer(data))
-        data["photo"] = save_printer_photo(request.files.get("photo"))
+        data["photo"] = printer_photo(request.files.get("photo"))
         data["access_code"] = data["access_code"] or None
         db = get_db()
-        db.execute(f"INSERT INTO printers ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
-                   list(data.values()))
+        insert(db, "printers", data)
         db.commit()
         flash("Printer added.", "ok")
         return redirect(url_for("printers"))
@@ -893,9 +789,7 @@ def new_printer():
 @app.route("/printers/<int:printer_id>/edit", methods=["GET", "POST"])
 def edit_printer(printer_id):
     db = get_db()
-    pr = db.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
-    if pr is None:
-        abort(404)
+    pr = get_printer(printer_id)
     if request.method == "POST":
         data = printer_from_form(request.form)
         error = printer_errors(data)
@@ -908,17 +802,16 @@ def edit_printer(printer_id):
             return render_template("printer_form.html", pr=public_printer(
                 {**data, "id": printer_id, "photo": pr["photo"], "access_code": None}))
         photo = pr["photo"]
-        new_photo = save_printer_photo(request.files.get("photo"))
+        new_photo = printer_photo(request.files.get("photo"))
         if new_photo or request.form.get("remove_photo"):
             photo = new_photo
         if not data["access_code"]:
             data["access_code"] = pr["access_code"]
         data["photo"] = photo
-        db.execute(f"UPDATE printers SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
-                   [*data.values(), printer_id])
+        update(db, "printers", printer_id, data)
         db.commit()
         if photo != pr["photo"]:
-            remove_upload(pr["photo"])
+            uploads.remove(pr["photo"])
         flash("Printer saved.", "ok")
         return redirect(url_for("printers"))
     return render_template("printer_form.html", pr=public_printer(pr))
@@ -927,13 +820,11 @@ def edit_printer(printer_id):
 @app.route("/printers/<int:printer_id>/delete", methods=["POST"])
 def delete_printer(printer_id):
     db = get_db()
-    pr = db.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
-    if pr is None:
-        abort(404)
+    pr = get_printer(printer_id)
     db.execute("UPDATE prints SET printer_id = NULL WHERE printer_id = ?", (printer_id,))
     db.execute("DELETE FROM printers WHERE id = ?", (printer_id,))
     db.commit()
-    remove_upload(pr["photo"])
+    uploads.remove(pr["photo"])
     flash("Printer deleted. Its prints are kept.", "ok")
     return redirect(url_for("printers"))
 
@@ -1089,8 +980,7 @@ def printer_maintenance(printer_id):
         else:
             data.setdefault("last_done_at", maintenance.now_local().isoformat())
             data["printer_id"] = printer_id
-            db.execute(f"INSERT INTO maintenance_tasks ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
-                       list(data.values()))
+            insert(db, "maintenance_tasks", data)
             db.commit()
             flash("Maintenance task added.", "ok")
         return redirect(url_for("printer_maintenance", printer_id=printer_id))
@@ -1119,8 +1009,7 @@ def edit_maintenance(task_id):
             flash(error, "warn")
             return render_template("maintenance_form.html", t={**dict(t), **data}, pr=pr)
         db = get_db()
-        db.execute(f"UPDATE maintenance_tasks SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
-                   [*data.values(), task_id])
+        update(db, "maintenance_tasks", task_id, data)
         db.commit()
         flash("Maintenance task saved.", "ok")
         return redirect(url_for("printer_maintenance", printer_id=pr["id"]))
@@ -1248,166 +1137,21 @@ def ams_history(printer_id, hours=24):
 
 # ---------- MakerWorld import ----------
 
-MW_API = "https://makerworld.com/api/v1/design-service/design/{}"
-MW_URL = re.compile(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d{1,20})(?!\d)", re.I)
-MW_IMAGE_HOST = re.compile(r"^https://[a-z0-9.-]+\.bblmw\.com/")
-MW_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-MAX_COVER_BYTES = 15 * 1024 * 1024
-
-
-class MakerWorldError(Exception):
-    pass
-
-
-def mw_redirect_allowed(url):
-    parts = urllib.parse.urlsplit(url)
-    host = parts.hostname or ""
-    return parts.scheme == "https" and parts.netloc.lower() == host and (
-        host in ("makerworld.com", "www.makerworld.com") or host.endswith(".bblmw.com"))
-
-
-class _MakerWorldRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows redirects only to MakerWorld itself, never to another (e.g. internal) host."""
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not mw_redirect_allowed(newurl):
-            return None
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-
-_mw_opener = urllib.request.build_opener(_MakerWorldRedirects)
-
-
-def _http_get(url, limit):
-    req = urllib.request.Request(url, headers={"User-Agent": MW_UA, "Accept-Language": "en"})
-    with _mw_opener.open(req, timeout=20) as resp:
-        body = resp.read(limit + 1)
-    if len(body) > limit:
-        raise MakerWorldError("Response from MakerWorld is too large.")
-    return body
-
-
-def _strip_html(text):
-    text = re.sub(r"<\s*(br|/p|/li|/h\d)\s*/?>", "\n", text or "", flags=re.I)
-    text = html.unescape(re.sub(r"<[^>]+>", "", text))
-    return re.sub(r"\n{3,}", "\n\n", text).strip()
-
-
-# MakerWorld's API is not documented: every field may be missing or of another type.
-def _dict(value):
-    return value if isinstance(value, dict) else {}
-
-
-def _dicts(value):
-    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
-
-
-def _text(value):
-    return value.replace("\r\n", "\n").strip() if isinstance(value, str) else ""
-
-
-def _number(value):
-    """Positive number, or None."""
-    f = slicer.to_float(value)
-    return f if f and f > 0 else None
-
-
-def fetch_makerworld(url):
-    """Fetches the metadata of a MakerWorld model. Returns (print data, cover);
-    cover is (bytes, extension) or None."""
-    m = MW_URL.match(url)
-    if not m:
-        raise MakerWorldError("That does not look like a MakerWorld model link (https://makerworld.com/…/models/…).")
-    design_id = m.group(2)
-    try:
-        d = json.loads(_http_get(MW_API.format(design_id), 5 * 1024 * 1024))
-    except (OSError, http.client.HTTPException, ValueError, RecursionError) as e:
-        raise MakerWorldError(f"Could not fetch MakerWorld ({e}). Fill in the print manually.") from e
-    d = _dict(d)
-    title = _text(d.get("title"))
-    if not title:
-        raise MakerWorldError("Model not found on MakerWorld.")
-
-    instances = _dicts(d.get("instances"))
-    inst = next((i for i in instances if i.get("id") == d.get("defaultInstanceId")), None) \
-        or next((i for i in instances if i.get("isDefault")), None) \
-        or (instances[0] if instances else {})
-    profile = _text(inst.get("title"))
-    filaments = [{"type": _text(f.get("type")), "color": _text(f.get("color")), "used_g": _number(f.get("usedG"))}
-                 for f in _dicts(inst.get("instanceFilaments"))]
-    materials = {slicer.material_of(f["type"], MATERIALS) for f in filaments if f["type"]}
-
-    notes = []
-    if profile:
-        notes.append(f"Profile: {profile}")
-    if filaments:
-        notes.append("Filament: " + slicer.filament_summary(filaments))
-    if inst.get("needAms"):
-        notes.append("Requires AMS.")
-    summary = _strip_html(_text(d.get("summary"))[:20000])
-    if summary:
-        notes += ["", summary[:3000]]
-
-    designer = _text(_dict(d.get("designCreator")).get("name"))
-    prediction = _number(inst.get("prediction"))
-    layer = re.search(r"(0\.\d{1,4})\s*mm\s*layer", profile, re.I)
-    tags = d.get("tags") if isinstance(d.get("tags"), list) else []
-    data = {
-        "name": title[:200],
-        "description": f"MakerWorld model by {designer}" if designer else "MakerWorld model",
-        "material": (materials.pop() if len(materials) == 1 else "Other") if materials else "",
-        "color": filaments[0]["color"] if len(filaments) == 1 else "",
-        "filament_g": _number(inst.get("weight")),
-        "print_time_min": round(prediction / 60) if prediction else None,
-        "layer_height": float(layer.group(1)) if layer else None,
-        "nozzle": None,
-        "status": "planned",
-        "tags": ", ".join([t for t in map(_text, tags) if t][:8]),
-        "notes": "\n".join(notes).strip(),
-        "printed_on": None,
-        "printer_id": None,
-        "source_url": f"https://makerworld.com/en/models/{design_id}",
-        "designer": designer or None,
-        "license": _text(d.get("license")) or None,
-    }
-    return data, fetch_cover(_text(d.get("coverUrl")))
-
-
-def fetch_cover(url):
-    """(bytes, extension), or None when there is no usable cover."""
-    if not MW_IMAGE_HOST.match(url):
-        return None
-    try:
-        content = _http_get(url, MAX_COVER_BYTES)
-    except (OSError, http.client.HTTPException, MakerWorldError) as e:
-        app.logger.warning("MakerWorld cover not fetched: %s", e)
-        return None
-    ext = thumbs.sniff(content)
-    return (content, ext) if ext else None
-
-
-def save_makerworld_cover(db, print_id, cover):
-    content, ext = cover
-    stored = f"{uuid.uuid4().hex}.{ext}"
-    with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
-        fh.write(content)
-    db.execute(
-        "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
-        (print_id, "photo", stored, f"makerworld-cover.{ext}", len(content)),
-    )
-    THUMBS.add(stored)
-
-
 # Fields filled in from MakerWorld when editing, if they are still empty.
 # Status, date, print time and printer come from the printer itself and are left alone.
 MW_FILL_FIELDS = ("description", "material", "color", "filament_g", "layer_height", "tags", "designer", "license")
+
+
+def add_cover(db, print_id, cover):
+    content, ext = cover
+    uploads.add_photo(db, print_id, content, f"makerworld-cover.{ext}")
 
 
 def enrich_from_makerworld(db, print_id, old, data):
     """Completes `data` with MakerWorld data when a new MakerWorld link was given, or when an earlier
     attempt failed (neither a cover nor a designer yet). Returns a flash message or None."""
     url = data.get("source_url") or ""
-    new, known = MW_URL.match(url), MW_URL.match(old["source_url"] or "")
+    new, known = makerworld.URL.match(url), makerworld.URL.match(old["source_url"] or "")
     if not new:
         return None
     has_cover = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name LIKE 'makerworld-cover.%'",
@@ -1415,8 +1159,8 @@ def enrich_from_makerworld(db, print_id, old, data):
     if known and known.group(2) == new.group(2) and (has_cover or old["designer"]):
         return None
     try:
-        mw, cover = fetch_makerworld(url)
-    except MakerWorldError as e:
+        mw, cover = makerworld.fetch(url, MATERIALS)
+    except makerworld.MakerWorldError as e:
         return (f"Link saved, but fetching the MakerWorld data failed: {e}", "warn")
     filled = [k for k in MW_FILL_FIELDS if not data.get(k) and mw.get(k)]
     for k in filled:
@@ -1425,7 +1169,7 @@ def enrich_from_makerworld(db, print_id, old, data):
         data["notes"] = f"{data['notes']}\n\n{mw['notes']}".strip() if data.get("notes") else mw["notes"]
     data["source_url"] = mw["source_url"]
     if cover and not has_cover:
-        save_makerworld_cover(db, print_id, cover)
+        add_cover(db, print_id, cover)
     return ("MakerWorld data filled in" + (" (with image)." if cover and not has_cover else "."), "ok")
 
 
@@ -1461,7 +1205,7 @@ def too_large(_e):
 
 
 init_db()
-THUMBS.backfill()
+uploads.THUMBS.backfill()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8100)

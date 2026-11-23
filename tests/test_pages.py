@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testenv  # noqa: E402
 import app  # noqa: E402
+import uploads  # noqa: E402
 import icons  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
 import thumbs  # noqa: E402
@@ -24,7 +25,7 @@ class PagesTest(unittest.TestCase):
     def setUp(self):
         testenv.reset(uploads=True)
         self.c = app.app.test_client()
-        add = mock.patch.object(app.THUMBS, "add")   # no ffmpeg in the page tests
+        add = mock.patch.object(uploads.THUMBS, "add")   # no ffmpeg in the page tests
         self.queued = add.start()
         self.addCleanup(add.stop)
         with ml.connect_db(app.DB_PATH) as db:

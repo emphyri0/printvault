@@ -30,7 +30,6 @@ MODELS = {
     "other": ("Other", None),       # camera route chosen by hand (camera_type)
 }
 LABELS = {k: v[0] for k, v in MODELS.items()}
-DUAL_NOZZLE = {"h2c", "h2d", "h2d_pro"}
 
 # Recognising the model in free text (the old "Model" field), most specific first.
 _GUESS = [

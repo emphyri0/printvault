@@ -62,16 +62,7 @@ GCODE_STATES = {"PREPARE": "Preparing", "RUNNING": "Printing", "PAUSE": "Paused"
                 "FAILED": "Failed", "IDLE": "Idle", "SLICING": "Slicing", "INIT": "Starting up"}
 
 
-def _stage_table():
-    try:
-        import json
-        with open(bambu_errors.DATA_FILE, encoding="utf-8") as fh:
-            return {int(k): v for k, v in (json.load(fh).get("stages") or {}).items()}
-    except (OSError, ValueError):
-        return {}
-
-
-STAGES = _stage_table()
+STAGES = {int(k): v for k, v in bambu_errors.STAGES.items()}
 
 
 def as_int(v):

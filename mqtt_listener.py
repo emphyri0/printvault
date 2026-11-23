@@ -16,11 +16,9 @@ import sqlite3
 import ssl
 import threading
 import time
-import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from zoneinfo import ZoneInfo
 
 import bambu_errors
 import bambu_models
@@ -29,10 +27,11 @@ import camera
 import maintenance
 import notify
 import thumbs
-from db import DB_PATH, UPLOAD_DIR, init_db
-from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code is also used by app)
+import uploads
+from bambu_errors import CANCELLED, error_code
+from db import DB_PATH, UPLOAD_DIR, connect, init_db
+from maintenance import now_local
 
-TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
 LIVE_HOST = os.environ.get("LIVE_HOST", "127.0.0.1")
 LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
 RELOAD_SECONDS = int(os.environ.get("MQTT_RELOAD_SECONDS", "60"))
@@ -43,10 +42,6 @@ ACTIVE = {"PREPARE", "RUNNING", "PAUSE"}
 DONE = {"FINISH": "succeeded", "FAILED": "failed"}
 
 log = logging.getLogger("printvault.mqtt")
-
-
-def now_local():
-    return datetime.now(TZ).replace(microsecond=0)
 
 
 def _by_id(items):
@@ -126,9 +121,7 @@ def ams_units(state):
 @contextmanager
 def connect_db(db_path):
     """Connection that commits on success and is always closed."""
-    db = sqlite3.connect(db_path, timeout=30)
-    db.row_factory = sqlite3.Row
-    db.execute("PRAGMA foreign_keys = ON")
+    db = connect(db_path)
     try:
         yield db
         db.commit()
@@ -460,7 +453,7 @@ class PrinterTracker:
 def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
     """Attaches a camera image to the print as a photo. The cover follows COVER_SQL in app.py: a chosen
     cover or an earlier real photo stays, but the camera image beats a slicer/MakerWorld thumbnail."""
-    stored = f"{uuid.uuid4().hex}.jpg"
+    stored = uploads.new_name("jpg")
     name = f"camera-{status}-{when:%Y%m%d-%H%M}.jpg"
     path = os.path.join(upload_dir, stored)
     os.makedirs(upload_dir, exist_ok=True)
@@ -470,9 +463,7 @@ def save_snapshot(db_path, upload_dir, print_id, jpeg, status, when):
         with connect_db(db_path) as db:
             if db.execute("SELECT 1 FROM prints WHERE id = ?", (print_id,)).fetchone() is None:
                 raise LookupError(f"print {print_id} no longer exists")
-            file_id = db.execute(
-                "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?, 'photo', ?, ?, ?)",
-                (print_id, stored, name, len(jpeg))).lastrowid
+            file_id = uploads.add_row(db, print_id, "photo", stored, name, len(jpeg))
     except BaseException:
         os.remove(path)
         raise

@@ -68,13 +68,14 @@ def _load():
     try:
         with open(DATA_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
-        return data.get("print_errors", {}), data.get("hms", {}), data.get("wiki", {}), data.get("_source", {})
+        return data.get("print_errors", {}), data.get("hms", {}), data.get("wiki", {}), data.get("_source", {}), \
+            data.get("stages") or {}
     except (OSError, ValueError) as e:
         log.warning("error code table not loaded (%s); codes are shown without text", e)
-        return {}, {}, {}, {}
+        return {}, {}, {}, {}, {}
 
 
-PRINT_ERRORS, HMS_CODES, WIKI_LINKS, SOURCE = _load()
+PRINT_ERRORS, HMS_CODES, WIKI_LINKS, SOURCE, STAGES = _load()
 
 
 def _int(value):

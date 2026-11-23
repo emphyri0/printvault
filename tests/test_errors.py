@@ -86,7 +86,7 @@ class ErrorCodeTest(unittest.TestCase):
 
     def test_missing_data_file_degrades(self):
         with mock.patch.object(be, "DATA_FILE", "/does/not/exist.json"), self.assertLogs("printvault.errors", "WARNING"):
-            self.assertEqual(be._load(), ({}, {}, {}, {}))
+            self.assertEqual(be._load(), ({}, {}, {}, {}, {}))
 
 
 class GeneratorTest(unittest.TestCase):
