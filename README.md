@@ -166,6 +166,13 @@ python mqtt_listener.py           # second terminal; live status at http://127.0
 python -m unittest discover -s tests
 ```
 
+**Dependencies:** `requirements.in` lists the direct ones; `requirements.txt` is generated from it with every package pinned and hashed, so a build gets exactly the same Python packages. To update: change `requirements.in` (or add `--upgrade` for the indirect ones) and run, with the Python version of the Dockerfile,
+
+```bash
+pip install pip-tools
+pip-compile --generate-hashes --strip-extras --no-emit-index-url requirements.in
+```
+
 The tests always use a fresh temporary data folder, whatever `DATA_DIR` is set to, and refuse to delete anything elsewhere (`tests/testenv.py`; import it before `app` in a new test).
 
 The thumbnail tests need ffmpeg and the JavaScript test needs Node.js; without them they are skipped (with `REQUIRE_FFMPEG=1` and `REQUIRE_NODE=1` they fail instead, as in CI). Everything in the image, with ffmpeg and without network:

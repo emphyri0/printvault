@@ -21,3 +21,11 @@ venv/
 
 # Local design work
 mockups/
+
+# Local tools, backups and logs
+CLAUDE.md
+.claude/
+.idea/
+.vscode/
+*.bundle
+*.log
