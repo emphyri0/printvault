@@ -3,12 +3,12 @@
 Run:  python3 -m unittest discover -s tests
 """
 import json
-import re
 import os
+import re
 import sys
 import unittest
-from unittest import mock
 from datetime import datetime, timedelta
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,10 +20,10 @@ import bambu_errors as be  # noqa: E402
 TZ = ZoneInfo("Europe/Brussels")
 
 
-
 def active_chip(text):
     """Regex for a filter chip that is switched on and contains `text`."""
     return re.compile(r'<a class="chip"[^>]*aria-current="true"[^>]*>(?:(?!</a>).)*' + re.escape(text), re.S)
+
 
 class Clock:
     def __init__(self):

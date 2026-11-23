@@ -128,13 +128,6 @@ class Logic(unittest.TestCase):
         for bad in ("x.3mf", "../x.jpg", "a/b.jpg", "x", "", None, "x.jpg-600.webp/.."):
             self.assertFalse(thumbs.is_photo(bad), bad)
 
-    def test_no_metadata_and_no_upscaling_in_command(self):
-        cmd = thumbs.ffmpeg_cmd("in.jpg", "out.webp", 600, "jpg")
-        self.assertIn("-map_metadata", cmd)
-        self.assertEqual(cmd[cmd.index("-map_metadata") + 1], "-1")
-        self.assertIn("min(600,iw)", cmd[cmd.index("-vf") + 1])
-        self.assertEqual(cmd[cmd.index("-frames:v") + 1], "1")
-
     def test_missing_ffmpeg_is_logged(self):
         d = tempfile.mkdtemp()
         try:

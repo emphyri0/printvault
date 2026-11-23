@@ -4,6 +4,9 @@
 
 A self-hosted archive for your 3D prints: photos, model files, filament, print time, settings and notes, with a live, **read-only** connection to Bambu Lab printers over the local network.
 
+> [!NOTE]
+> **Only the Bambu Lab P2S has been tested on hardware.** The other models are *expected to work, untested — reports welcome* ([which models](#supported-models)). Everything except the live connection and the camera works without a Bambu Lab printer.
+
 > [!WARNING]
 > **Printvault has no login.** Anyone who can reach it can see, change and delete everything, and watch the printer camera. Only run it on a network you trust (your home LAN, a VPN such as WireGuard or Tailscale), never directly on the internet. Put it behind a reverse proxy with authentication if you need more.
 
@@ -114,17 +117,17 @@ There is one camera connection per printer, shared by all viewers, and it stops 
 
 The model decides the camera route; the MQTT connection is the same for all models. Fields a model does not send (a chamber temperature on the A1/P1, the aux fan on the A1, …) are simply left out.
 
-| Model | Camera | Status fields | Tested on hardware |
+| Model | Camera | Status fields | Status |
 |---|---|---|---|
-| P2S | RTSPS, port 322 | packed `device.*` temperatures, chamber, fans, speed, stage, AMS 2 Pro | **yes** |
-| X1, X1C, X1E | RTSPS, port 322 | `nozzle_temper`/`bed_temper`/`chamber_temper` as plain numbers (older firmware) or packed; `vt_tray` external spool | no |
-| H2D, H2D Pro, H2C | RTSPS, port 322 | both nozzles (current/target, active one marked), packed temperatures, `device.ctc` chamber | no |
-| H2S | RTSPS, port 322 | packed temperatures, `device.ctc` chamber | no |
-| P1P, P1S | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature | no |
-| A1, A1 mini | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature or aux/chamber fan | no |
-| Other | chosen by hand: RTSPS, JPEG stream or none | whatever the printer sends in the known formats | no |
+| P2S | RTSPS, port 322 | packed `device.*` temperatures, chamber, fans, speed, stage, AMS 2 Pro | **tested on hardware** |
+| X1, X1C, X1E | RTSPS, port 322 | `nozzle_temper`/`bed_temper`/`chamber_temper` as plain numbers (older firmware) or packed; `vt_tray` external spool | expected to work, untested — reports welcome |
+| H2D, H2D Pro, H2C | RTSPS, port 322 | both nozzles (current/target, active one marked), packed temperatures, `device.ctc` chamber | expected to work, untested — reports welcome |
+| H2S | RTSPS, port 322 | packed temperatures, `device.ctc` chamber | expected to work, untested — reports welcome |
+| P1P, P1S | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature | expected to work, untested — reports welcome |
+| A1, A1 mini | JPEG stream, port 6000 | plain-number temperatures, no chamber temperature or aux/chamber fan | expected to work, untested — reports welcome |
+| Other | chosen by hand: RTSPS, JPEG stream or none | whatever the printer sends in the known formats | untested — reports welcome |
 
-"No" means: built after the report formats and camera split per model documented in [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`pybambu/models.py`) and covered by tests with report fragments in those formats (`tests/test_models.py`), but never run against such a printer. Reports of what works and what does not are very welcome (open an issue).
+*Expected to work, untested* means: built after the report formats and camera split per model documented in [ha-bambulab](https://github.com/greghesp/ha-bambulab) (`pybambu/models.py`) and covered by tests with report fragments in those formats (`tests/test_models.py`), but never run against such a printer. Models that mostly send changes instead of complete reports are followed by merging every report (`tests/test_listener_state.py`); Printvault never asks the printer for a full report, so after a restart of the listener some fields appear only once the printer sends them. Reports of what works and what does not are very welcome: please open an issue.
 
 ## Using it
 
@@ -176,6 +179,7 @@ GitHub Actions (`.github/workflows/tests.yml`) and Forgejo Actions (`.forgejo/wo
 
 Notes for contributors:
 
+- Files: `app.py` (routes and pages), `db.py` (schema and database helpers), `uploads.py` and `thumbs.py` (files and thumbnails), `makerworld.py` and `slicer.py` (import), `security.py` (host and cross-site checks, headers), `mqtt_listener.py` (the listener), `bambu_*.py` (report fields, models, error codes), `camera.py`, `maintenance.py`, `notify.py`.
 - Internal values are lowercase snake_case, shown through `LABELS` in `app.py` (status: `planned`, `printing`, `succeeded`, `failed`, `unknown`, `reprint`; fail reason: `adhesion`, `warping`, `spaghetti`, `clog`, `power_loss`, `other`; speed profile: `silent`, `standard`, `sport`, `ludicrous`; printer models in `bambu_models.py`).
 - Front end: plain HTML, CSS and JavaScript in `templates/` and `static/`; own inline SVG icons in `icons.py`; Inter and JetBrains Mono self-hosted in `static/fonts/`.
 - Accessibility: a status is always an icon plus a word, never colour alone; visible focus; text contrast at least 4.5:1, form field borders at least 3:1; the chart colours are checked for colour blindness and have direct labels and a table.

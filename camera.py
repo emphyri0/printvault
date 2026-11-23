@@ -113,7 +113,7 @@ def jpeg_auth_packet(access_code):
     try:
         code = access_code.encode("ascii")
     except UnicodeEncodeError:
-        raise CameraError("The access code contains characters the camera protocol does not accept.")
+        raise CameraError("The access code contains characters the camera protocol does not accept.") from None
     if len(code) > 32:
         raise CameraError("The access code is too long for the camera protocol.")
     return struct.pack("<IIII", 0x40, 0x3000, 0, 0) + b"bblp".ljust(32, b"\0") + code.ljust(32, b"\0")
@@ -147,9 +147,9 @@ class JpegStream:
             self.sock = self.connect(self.ip, self.timeout)
             self.sock.settimeout(self.timeout)
             self.sock.sendall(packet)
-        except (OSError, ssl.SSLError) as e:
+        except OSError as e:
             self.close()
-            raise CameraError(f"No connection to the camera on port {JPEG_PORT}: {e}")
+            raise CameraError(f"No connection to the camera on port {JPEG_PORT}: {e}") from None
         return self
 
     def close(self):
@@ -168,10 +168,10 @@ class JpegStream:
                 raise CameraError("Camera connection closed.")
             try:
                 chunk = sock.recv(min(65536, n - len(buf)))
-            except socket.timeout:
-                raise CameraError(f"No camera image within {self.timeout} seconds.")
-            except (OSError, ssl.SSLError) as e:
-                raise CameraError(f"Camera connection lost: {e}")
+            except TimeoutError:
+                raise CameraError(f"No camera image within {self.timeout} seconds.") from None
+            except OSError as e:
+                raise CameraError(f"Camera connection lost: {e}") from None
             if not chunk:
                 raise CameraError("The printer closed the camera connection (wrong access code, "
                                   "or LAN live view off?).")
@@ -211,9 +211,9 @@ def grab_snapshot(ip, access_code, timeout=SNAPSHOT_TIMEOUT, route=RTSPS):
         res = subprocess.run(ffmpeg_cmd(rtsp_url(ip, access_code), single=True),
                              capture_output=True, timeout=timeout, stdin=subprocess.DEVNULL)
     except FileNotFoundError:
-        raise CameraError("ffmpeg is not installed.")
+        raise CameraError("ffmpeg is not installed.") from None
     except subprocess.TimeoutExpired:
-        raise CameraError(f"No camera image within {timeout} seconds.")
+        raise CameraError(f"No camera image within {timeout} seconds.") from None
     if res.returncode != 0 or not res.stdout.startswith(SOI):
         msg = res.stderr.decode(errors="replace").strip().splitlines()
         raise CameraError("Fetching the camera image failed: "
@@ -330,6 +330,7 @@ class Camera:
         with self.cond:
             self.proc = proc
         errors = collections.deque(maxlen=5)
+
         def read_errors():
             with proc.stderr:
                 for line in proc.stderr:

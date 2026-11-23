@@ -9,9 +9,9 @@ Run:  python mqtt_listener.py
 """
 import copy
 import json
-import re
 import logging
 import os
+import re
 import sqlite3
 import ssl
 import threading
@@ -416,6 +416,7 @@ class PrinterTracker:
     def live(self):
         with self.lock:
             s = self.state
+
             def as_int(v):
                 try:
                     return int(v)

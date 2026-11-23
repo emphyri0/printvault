@@ -10,8 +10,7 @@ import urllib.parse
 import urllib.request
 from datetime import date, datetime
 
-from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
-                   send_from_directory, url_for)
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, url_for
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.routing import IntegerConverter
 from werkzeug.utils import secure_filename
@@ -115,6 +114,7 @@ def form_to_print(form):
     status = form.get("status", "planned")
     failed = status == "failed"
     reason = form.get("fail_reason", "")
+    source_url = form.get("source_url", "").strip()
     hours = num(form.get("hours"), int) or 0
     minutes = num(form.get("minutes"), int) or 0
     total = hours * 60 + minutes
@@ -132,7 +132,7 @@ def form_to_print(form):
         "notes": form.get("notes", "").replace("\r\n", "\n").strip(),
         "printed_on": form.get("printed_on") or None,
         "printer_id": num(form.get("printer_id"), int),
-        "source_url": (lambda u: u if re.match(r"^https?://", u, re.I) else None)(form.get("source_url", "").strip()),
+        "source_url": source_url if re.match(r"https?://", source_url, re.I) else None,
         "designer": form.get("designer", "").strip() or None,
         "license": form.get("license", "").strip() or None,
         "infill": form.get("infill", "").strip() or None,
@@ -205,7 +205,7 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
     if filaments:
         p = db.execute("SELECT notes FROM prints WHERE id = ?", (print_id,)).fetchone()
         line = "Filament (slicer): " + slicer.filament_summary(filaments)
-        notes = [l for l in (p["notes"] or "").splitlines() if not l.startswith("Filament (slicer):")]
+        notes = [n for n in (p["notes"] or "").splitlines() if not n.startswith("Filament (slicer):")]
         fields["notes"] = "\n".join([line] + notes).strip()
     if fields:
         update(db, "prints", print_id, fields)
@@ -290,7 +290,7 @@ def errcode(err):
 
 @app.template_filter("errinfo")
 def errinfo(err):
-    """print_error → {code, text, reason, url} of None."""
+    """print_error → {code, text, reason, url} or None."""
     return bambu_errors.describe_print_error(err)
 
 

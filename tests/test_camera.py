@@ -172,7 +172,7 @@ class EndSnapshotTest(unittest.TestCase):
 
     def test_snapshotter_error_does_not_break_tracking(self):
         t = self.tracker()
-        t.snapshotter = mock.Mock(side_effect=RuntimeError("stuk"))
+        t.snapshotter = mock.Mock(side_effect=RuntimeError("broken"))
         t.handle(report("RUNNING"))
         with self.assertLogs("printvault.mqtt", logging.ERROR):
             t.handle(report("FINISH"))

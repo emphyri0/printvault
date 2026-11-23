@@ -60,7 +60,7 @@ SLICE_INFO = """<?xml version="1.0" encoding="UTF-8"?>
 MODEL = """<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
  <metadata name="Application">BambuStudio-02.00.00.00</metadata>
- <metadata name="Title">Kabelhouder bureau</metadata>
+ <metadata name="Title">Desk cable holder</metadata>
  <resources/>
 </model>"""
 
@@ -126,10 +126,10 @@ class SlicerTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_sliced_3mf_plate_1(self):
-        path = os.path.join(self.dir, "kabelhouder.gcode.3mf")
+        path = os.path.join(self.dir, "cable_holder.gcode.3mf")
         make_3mf(path)
-        parsed = slicer.parse(path, "kabelhouder.gcode.3mf")
-        self.assertEqual(parsed["name"], "Kabelhouder bureau")
+        parsed = slicer.parse(path, "cable_holder.gcode.3mf")
+        self.assertEqual(parsed["name"], "Desk cable holder")
         self.assertEqual([p["index"] for p in parsed["plates"]], [1, 2])
         fields, fil, thumb = slicer.plate_to_print_fields(parsed, 1, MATERIALS)
         self.assertEqual(fields["print_time_min"], 84)

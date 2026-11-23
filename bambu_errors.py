@@ -3,7 +3,7 @@
 SOURCE
   The texts and wiki links come from bambu_errors_data.json, generated with
   scripts/update_bambu_errors.py from the error code lists of ha-bambulab
-  (https://github.com/greghesp/ha-bambulab, scripts/hms_error_text/, MIT-licentie).
+  (https://github.com/greghesp/ha-bambulab, scripts/hms_error_text/, MIT licence).
   ha-bambulab gets them from Bambu Lab itself (https://e.bambulab.com/query.php, also used by
   Bambu Studio) and from the wiki (https://wiki.bambulab.com/en/hms/home). Commit, date, model (P2S)
   and language (en) are in the "_source" field of the JSON file.

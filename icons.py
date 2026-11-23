@@ -1,6 +1,6 @@
 """Own inline SVG icons (24×24, stroke 1.8, currentColor). No third-party icon set or brand marks.
 
-base.html includes SPRITE once; templates use {{ icon("clock") }} and JavaScript uses
+base.html includes icon_sprite() once; templates use {{ icon("clock") }} and JavaScript uses
 <svg><use href="#i-clock"></use></svg> (see static/app.js: PV.icon).
 """
 from markupsafe import Markup

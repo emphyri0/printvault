@@ -3,8 +3,8 @@ using a real P2S report (anonymised) in tests/fixtures/p2s_report.json.
 """
 import copy
 import json
-import re
 import os
+import re
 import sys
 import unittest
 from datetime import datetime, timedelta

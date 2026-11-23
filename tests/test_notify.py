@@ -75,7 +75,7 @@ class PostTest(unittest.TestCase):
             notify.post({"ntfy_url": "", "ntfy_topic": "abc"}, "T", "M", urlopen=f)
 
     def test_post_error_does_not_leak_token(self):
-        f = FakeUrlopen(fail=OSError("verbinding geweigerd"))
+        f = FakeUrlopen(fail=OSError("connection refused"))
         with self.assertRaises(notify.NotifyError) as cm:
             notify.post({"ntfy_url": "https://x", "ntfy_topic": "a", "ntfy_token": "tk_secret"}, "T", "M", urlopen=f)
         self.assertNotIn("tk_secret", str(cm.exception))
@@ -187,7 +187,7 @@ class TrackerNotifyTest(unittest.TestCase):
 
     def test_notifier_exception_does_not_break_tracking(self):
         def broken(*a, **k):
-            raise RuntimeError("stuk")
+            raise RuntimeError("broken")
         t = ml.PrinterTracker(self.pid, "P2S", app.DB_PATH, clock=self.clock, notifier=broken)
         t.handle(report("RUNNING"))
         with self.assertLogs("printvault.mqtt", "ERROR"):
