@@ -15,10 +15,9 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-_tmp = tempfile.mkdtemp()
-os.environ.setdefault("DATA_DIR", _tmp)
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import notify  # noqa: E402
 import security  # noqa: E402
@@ -31,9 +30,7 @@ PNG = b"\x89PNG\r\n\x1a\nimage"
 
 class Base(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         add = mock.patch.object(app.THUMBS, "add")
         add.start()
         self.addCleanup(add.stop)

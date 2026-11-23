@@ -3,15 +3,14 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 import unittest
 from contextlib import closing
 from datetime import datetime, timedelta
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import maintenance  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
@@ -41,9 +40,7 @@ class FakeUrlopen:
 
 
 def fresh_db():
-    if os.path.exists(app.DB_PATH):
-        os.remove(app.DB_PATH)
-    app.init_db()
+    testenv.reset()
 
 
 def db_conn():
@@ -284,8 +281,7 @@ class MaintenanceTest(unittest.TestCase):
         self.assertIsNone(self.task(tid)["notified_at"])
 
     def test_seed_once_for_existing_printers(self):
-        os.remove(app.DB_PATH)
-        app.init_db()                                   # empty database: flag set, no printers
+        testenv.reset()                                # empty database: flag set, no printers
         with db_conn() as db, db:
             db.execute("DELETE FROM settings WHERE key = 'maintenance_seeded'")   # existing installation from before this version
             db.execute("INSERT INTO printers (name, model) VALUES ('3DP', 'Bambu Lab P2S')")

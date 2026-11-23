@@ -12,7 +12,8 @@ import unittest
 import zipfile
 import zlib
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402,F401
 import slicer  # noqa: E402
 
 MATERIALS = ["PLA", "PETG", "ABS", "ASA", "TPU", "PA", "PC", "Other"]

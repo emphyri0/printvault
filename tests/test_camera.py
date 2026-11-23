@@ -15,9 +15,8 @@ from datetime import datetime
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-_tmp = tempfile.mkdtemp()
-os.environ.setdefault("DATA_DIR", _tmp)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import camera  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
@@ -146,9 +145,7 @@ def report(state, task="1001"):
 
 class EndSnapshotTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         with ml.connect_db(app.DB_PATH) as db:
             self.printer_id = db.execute("INSERT INTO printers (name, ip, serial, access_code, mqtt_enabled) "
                                          "VALUES ('P2S', '10.0.0.2', 'SER', ?, 1)", (CODE,)).lastrowid
@@ -247,9 +244,7 @@ class EndSnapshotTest(unittest.TestCase):
 
 class CameraRoutesTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         app.cameras = camera.CameraManager()
         app._snapshots.clear()
         self.c = app.app.test_client()

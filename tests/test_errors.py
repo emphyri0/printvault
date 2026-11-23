@@ -2,12 +2,11 @@
 import json
 import os
 import sys
-import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402,F401
 import bambu_errors as be  # noqa: E402
 import update_bambu_errors as gen  # noqa: E402
 
@@ -80,7 +79,6 @@ class ErrorCodeTest(unittest.TestCase):
         self.assertIsNone(be.suggest_fail_reason(UNKNOWN))
 
     def test_fail_reason_codes_exist_and_are_valid(self):
-        os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
         import app
         for code, reason in be.FAIL_REASONS_BY_CODE.items():
             self.assertIn(reason, app.FAIL_REASONS)

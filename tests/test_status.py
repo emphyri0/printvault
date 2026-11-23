@@ -6,14 +6,12 @@ import json
 import re
 import os
 import sys
-import tempfile
 import unittest
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-_tmp = tempfile.mkdtemp()
-os.environ.setdefault("DATA_DIR", _tmp)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import bambu_status as bs  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
@@ -110,9 +108,7 @@ def msg(**changes):
 
 class ListenerTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         with ml.connect_db(app.DB_PATH) as db:
             self.printer_id = db.execute("INSERT INTO printers (name) VALUES ('P2S')").lastrowid
         self.clock = Clock()
@@ -209,9 +205,7 @@ class ListenerTest(unittest.TestCase):
 
 class AppTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         self.c = app.app.test_client()
 
     def test_nozzle_filter(self):

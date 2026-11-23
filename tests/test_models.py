@@ -10,14 +10,12 @@ import os
 import socket
 import struct
 import sys
-import tempfile
 import threading
 import unittest
 from unittest import mock
 
-_tmp = tempfile.mkdtemp()
-os.environ.setdefault("DATA_DIR", _tmp)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import bambu_models as bm  # noqa: E402
 import bambu_status as bs  # noqa: E402
@@ -69,9 +67,7 @@ class ModelsTest(unittest.TestCase):
 
 class PrinterFormTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        app.init_db()
+        testenv.reset()
         app.cameras = camera.CameraManager()
         app._snapshots.clear()
         self.c = app.app.test_client()

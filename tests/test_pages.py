@@ -4,15 +4,12 @@ Run:  python3 -m unittest discover -s tests
 """
 import os
 import re
-import shutil
 import sys
-import tempfile
 import unittest
 from unittest import mock
 
-_tmp = tempfile.mkdtemp()
-os.environ.setdefault("DATA_DIR", _tmp)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import testenv  # noqa: E402
 import app  # noqa: E402
 import icons  # noqa: E402
 import mqtt_listener as ml  # noqa: E402
@@ -25,10 +22,7 @@ def chip_on(text):
 
 class PagesTest(unittest.TestCase):
     def setUp(self):
-        if os.path.exists(app.DB_PATH):
-            os.remove(app.DB_PATH)
-        shutil.rmtree(app.UPLOAD_DIR, ignore_errors=True)
-        app.init_db()
+        testenv.reset(uploads=True)
         self.c = app.app.test_client()
         add = mock.patch.object(app.THUMBS, "add")   # no ffmpeg in the page tests
         self.queued = add.start()
