@@ -37,6 +37,7 @@ FPS = int(os.environ.get("CAMERA_FPS", "5"))
 WIDTH = int(os.environ.get("CAMERA_WIDTH", "1280"))
 IDLE_SECONDS = 15          # the stream stays open this long after the last viewer
 STALL_SECONDS = 20         # a viewer stream stops without a new frame for this long
+RETRY_SECONDS = 2          # wait after a stream that ended; doubles up to 30 s
 SNAPSHOT_TIMEOUT = 25
 SOCKET_TIMEOUT_US = 10_000_000
 MAX_FRAME = 8 * 1024 * 1024
@@ -293,7 +294,7 @@ class Camera:
         return self.closed or (self.viewers == 0 and time.monotonic() - self.last_used > self.idle)
 
     def _run(self):
-        backoff = 2
+        backoff = RETRY_SECONDS
         while True:
             with self.cond:
                 if self._idle():
@@ -302,9 +303,12 @@ class Camera:
                     self.cond.notify_all()
                     return
             started = time.monotonic()
-            self._stream_once()
+            try:
+                self._stream_once()
+            except Exception as e:   # the thread must survive, or the camera stays dark until a restart
+                log.error("camera: unexpected error: %s", redact(repr(e), self.secret))
             if time.monotonic() - started > 30:
-                backoff = 2
+                backoff = RETRY_SECONDS
             else:
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 30)

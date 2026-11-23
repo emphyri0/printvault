@@ -24,4 +24,5 @@ jobs:
       - name: Run tests
         env:
           REQUIRE_FFMPEG: "1"   # fail instead of skipping the thumbnail tests when ffmpeg is missing
+          REQUIRE_NODE: "1"     # same for the JavaScript test
         run: python -m unittest discover -s tests -v

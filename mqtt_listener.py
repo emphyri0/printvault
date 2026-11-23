@@ -29,11 +29,9 @@ import camera
 import maintenance
 import notify
 import thumbs
+from db import DB_PATH, UPLOAD_DIR, init_db
 from bambu_errors import CANCELLED, error_code  # noqa: F401  (error_code is also used by app)
 
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
-DB_PATH = os.path.join(DATA_DIR, "printvault.db")
-UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
 TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
 LIVE_HOST = os.environ.get("LIVE_HOST", "127.0.0.1")
 LIVE_PORT = int(os.environ.get("LIVE_PORT", "8101"))
@@ -93,8 +91,8 @@ def drop_missing_ams(state):
 
 def ams_slots(state):
     slots = []
-    for unit in (state.get("ams") or {}).get("ams") or []:
-        for tray in unit.get("tray") or []:
+    for unit in bambu_status.ams_list(state):
+        for tray in bambu_status.trays(unit):
             if tray.get("tray_type"):
                 color = str(tray.get("tray_color") or "")
                 slots.append((str(unit.get("id", "")), str(tray.get("id", "")), str(tray["tray_type"])[:40],
@@ -115,10 +113,10 @@ def ams_units(state):
     """Humidity and temperature per AMS unit. Only newer firmware sends humidity_pct (humidity_raw);
     humidity_level is Bambu's level 1–5."""
     units = []
-    for unit in (state.get("ams") or {}).get("ams") or []:
-        if not isinstance(unit, dict) or unit.get("id") is None:
+    for unit in bambu_status.ams_list(state):
+        if unit.get("id") is None:
             continue
-        u = {"id": str(unit["id"]), "humidity_pct": _num(unit.get("humidity_raw")),
+        u = {"id": str(unit["id"]), "name": bambu_status.ams_name(unit["id"]), "humidity_pct": _num(unit.get("humidity_raw")),
              "humidity_level": _num(unit.get("humidity"), int), "temp": _num(unit.get("temp"))}
         if any(u[k] is not None for k in ("humidity_pct", "humidity_level", "temp")):
             units.append(u)
@@ -639,8 +637,7 @@ def serve_live(supervisor, host=LIVE_HOST, port=LIVE_PORT):
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    from app import init_db   # makes sure the tables/columns exist
-    init_db()
+    init_db()   # makes sure the tables/columns exist
     sup = Supervisor()
     serve_live(sup)
     sup.run()

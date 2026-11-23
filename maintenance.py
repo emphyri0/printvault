@@ -1,13 +1,12 @@
 """Maintenance tasks per printer, with an interval in print hours and/or days.
 
 Print hours since the last maintenance = the sum of the print time of that printer's prints that
-finished after `last_done_at` (finished_at, else printed_on, else created_at). Planned and running
-prints do not count.
+finished after `last_done_at` (see print_end). Planned and running prints do not count.
 """
 import os
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo(os.environ.get("PRINTVAULT_TZ", "Europe/Brussels"))
@@ -40,12 +39,26 @@ def seed_defaults(db, printer_id, now=None):
 
 
 def print_minutes_since(db, printer_id, since):
-    row = db.execute(
-        "SELECT COALESCE(SUM(print_time_min), 0) FROM prints WHERE printer_id = ? "
-        "AND status NOT IN ('planned', 'printing') "
-        "AND datetime(COALESCE(finished_at, printed_on, created_at)) > datetime(?)",
-        (printer_id, since)).fetchone()
-    return row[0]
+    since = parse_time(since)
+    rows = db.execute("SELECT print_time_min, finished_at, printed_on, created_at FROM prints WHERE printer_id = ? "
+                      "AND status NOT IN ('planned', 'printing') AND print_time_min > 0", (printer_id,))
+    return sum(minutes for minutes, *times in rows if print_end(*times) > since)
+
+
+def print_end(finished_at, printed_on, created_at):
+    """When a print ended. A print entered by hand only has a day: entered that same day, it is the time of
+    entry; otherwise the end of that day, so it counts and maintenance is never due too late."""
+    for text in (finished_at, created_at if not printed_on else None):
+        try:
+            return parse_time(text)
+        except (TypeError, ValueError):
+            pass
+    created = parse_time(created_at).astimezone(TZ)
+    try:
+        day = date.fromisoformat(printed_on)
+    except (TypeError, ValueError):
+        return created
+    return created if created.date() == day else datetime.combine(day, datetime.max.time(), TZ)
 
 
 def task_status(db, task, now=None):

@@ -165,7 +165,7 @@ python -m unittest discover -s tests
 
 The tests always use a fresh temporary data folder, whatever `DATA_DIR` is set to, and refuse to delete anything elsewhere (`tests/testenv.py`; import it before `app` in a new test).
 
-The thumbnail tests need ffmpeg and are skipped without it (with `REQUIRE_FFMPEG=1` they fail instead, as in CI). Everything in the image, with ffmpeg and without network:
+The thumbnail tests need ffmpeg and the JavaScript test needs Node.js; without them they are skipped (with `REQUIRE_FFMPEG=1` and `REQUIRE_NODE=1` they fail instead, as in CI). Everything in the image, with ffmpeg and without network:
 
 ```bash
 docker run --rm --network none -u "$(id -u):$(id -g)" -e PYTHONDONTWRITEBYTECODE=1 -e DATA_DIR=/tmp/pvtest \

@@ -1,5 +1,6 @@
 import html
 import http.client
+import ipaddress
 import json
 import math
 import os
@@ -10,7 +11,6 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from contextlib import closing
 from datetime import date, datetime
 
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
@@ -30,10 +30,8 @@ import security
 import slicer
 import thumbs
 from bambu_errors import error_code
+from db import DB_PATH, UPLOAD_DIR, init_db
 
-DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
-UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
-DB_PATH = os.path.join(DATA_DIR, "printvault.db")
 THUMBS = thumbs.Worker(UPLOAD_DIR)   # WebP thumbnails, made in the background
 
 PHOTO_EXT = {"jpg", "jpeg", "png", "webp", "gif"}
@@ -88,90 +86,6 @@ def apply_proxy_fix(wsgi_app, n):
 
 app.wsgi_app = apply_proxy_fix(app.wsgi_app, trusted_proxies(os.environ.get("TRUSTED_PROXIES")))
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS prints (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    material TEXT DEFAULT '',
-    color TEXT DEFAULT '',
-    filament_g REAL,
-    print_time_min INTEGER,
-    layer_height REAL,
-    nozzle REAL,
-    status TEXT DEFAULT 'planned',
-    tags TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    printed_on TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS printers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    model TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    photo TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS print_ams (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
-    ams_id TEXT,
-    tray_id TEXT,
-    tray_type TEXT,
-    tray_color TEXT
-);
-CREATE TABLE IF NOT EXISTS ams_readings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    printer_id INTEGER NOT NULL REFERENCES printers(id) ON DELETE CASCADE,
-    ams_id TEXT NOT NULL,
-    humidity_pct REAL,
-    humidity_level INTEGER,
-    temp REAL,
-    recorded_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_ams_readings ON ams_readings(printer_id, ams_id, recorded_at);
-CREATE TABLE IF NOT EXISTS print_samples (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
-    recorded_at TEXT NOT NULL,
-    nozzle REAL,
-    nozzle_target REAL,
-    bed REAL,
-    bed_target REAL,
-    chamber REAL,
-    stage INTEGER,
-    percent INTEGER,
-    layer INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_print_samples ON print_samples(print_id, recorded_at);
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT
-);
-CREATE TABLE IF NOT EXISTS maintenance_tasks (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    printer_id INTEGER NOT NULL REFERENCES printers(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    interval_hours REAL,
-    interval_days INTEGER,
-    last_done_at TEXT,
-    notified_at TEXT,
-    notes TEXT DEFAULT '',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS files (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    print_id INTEGER NOT NULL REFERENCES prints(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    stored_name TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    size INTEGER,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-"""
-
-
 def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH, timeout=30)
@@ -185,51 +99,6 @@ def close_db(_exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
-
-
-MIGRATIONS = {
-    "prints": [("printer_id", "INTEGER REFERENCES printers(id) ON DELETE SET NULL"),
-               ("source_url", "TEXT"), ("designer", "TEXT"), ("license", "TEXT"),
-               ("infill", "TEXT"), ("plate_type", "TEXT"), ("nozzle_temp", "INTEGER"),
-               ("bed_temp", "INTEGER"), ("plate", "INTEGER"), ("cover_file_id", "INTEGER"),
-               ("fail_reason", "TEXT"), ("fail_note", "TEXT"),
-               ("started_at", "TEXT"), ("finished_at", "TEXT"), ("print_error", "INTEGER"),
-               ("task_id", "TEXT"), ("source", "TEXT"),
-               ("plate_count", "INTEGER"), ("nozzle_type", "TEXT"), ("speed_profile", "TEXT"),
-               ("spaghetti_detection", "INTEGER"), ("first_layer_inspection", "INTEGER")],
-    "printers": [("ip", "TEXT"), ("serial", "TEXT"), ("access_code", "TEXT"),
-                 ("mqtt_enabled", "INTEGER DEFAULT 0"),
-                 # bambu_models.MODELS value; camera_type only counts for 'other' (rtsps / tcp6000 / none)
-                 ("bambu_model", "TEXT"), ("camera_type", "TEXT")],
-}
-
-
-def init_db():
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    with closing(sqlite3.connect(DB_PATH, timeout=30)) as db, db:
-        db.executescript(SCHEMA)
-        for table, columns in MIGRATIONS.items():
-            cols = {r[1] for r in db.execute(f"PRAGMA table_info({table})")}
-            for col, typ in columns:
-                if col not in cols:
-                    try:
-                        db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
-                    except sqlite3.OperationalError as e:
-                        # web app and listener start at the same time; the other one may have just done it
-                        if "duplicate column" not in str(e):
-                            raise
-        db.execute("CREATE INDEX IF NOT EXISTS idx_print_ams_print ON print_ams(print_id)")
-        # Printers from before the model list: recognise the model in the free-text field
-        # (e.g. 'Bambu Lab P2S' → p2s). Only where nothing was chosen yet.
-        for pid, text in db.execute("SELECT id, model FROM printers WHERE bambu_model IS NULL").fetchall():
-            guess = bambu_models.guess_model(text)
-            if guess:
-                db.execute("UPDATE printers SET bambu_model = ? WHERE id = ? AND bambu_model IS NULL", (guess, pid))
-        # Once: default maintenance tasks for printers that already exist (and have no tasks).
-        if db.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('maintenance_seeded', '1')").rowcount:
-            for (pid,) in db.execute("SELECT id FROM printers").fetchall():
-                if not db.execute("SELECT 1 FROM maintenance_tasks WHERE printer_id = ?", (pid,)).fetchone():
-                    maintenance.seed_defaults(db, pid)
 
 
 def ext_of(filename):
@@ -488,6 +357,9 @@ def duration(minutes):
     return f"{h}h {m:02d}m" if h else f"{m}m"
 
 
+app.add_template_filter(bambu_status.ams_name, "ams_name")
+
+
 @app.template_filter("errcode")
 def errcode(err):
     return error_code(err) or "–"
@@ -530,19 +402,21 @@ def filesize(size):
 
 @app.context_processor
 def inject_lists():
-    db = get_db()
     models = {"bambu_models": bambu_models.MODELS, "camera_types": bambu_models.CAMERA_TYPES}
-    printers = db.execute("SELECT id, name FROM printers ORDER BY name").fetchall()
+    try:
+        db = get_db()
+        printers = db.execute("SELECT id, name FROM printers ORDER BY name").fetchall()
+        due = maintenance_due_total(db, printers)
+    except sqlite3.Error as e:   # the error page is rendered with this too
+        app.logger.error("page rendered without the database: %s", e)
+        printers, due = [], 0
     return {"all_printers": printers, "materials": MATERIALS, "statuses": STATUSES,
             "fail_reasons": FAIL_REASONS, "speed_profiles": SPEED_PROFILES, "labels": LABELS,
-            "status_icons": icons.STATUS_ICONS, "maintenance_due": maintenance_due_total(db, printers), **models}
+            "status_icons": icons.STATUS_ICONS, "maintenance_due": due, **models}
 
 
 def maintenance_due_total(db, printers):
-    try:
-        return sum(t["st"]["due"] for pr in printers for t in maintenance.tasks_for_printer(db, pr["id"]))
-    except sqlite3.Error:
-        return 0
+    return sum(t["st"]["due"] for pr in printers for t in maintenance.tasks_for_printer(db, pr["id"]))
 
 
 app.add_template_global(icons.icon, "icon")
@@ -622,8 +496,9 @@ def index():
         sql += " AND p.printer_id = ?"
         args.append(printer)
     if q:
-        sql += " AND (p.name LIKE ? OR p.tags LIKE ? OR p.description LIKE ? OR p.notes LIKE ?)"
-        args += [f"%{q}%"] * 4
+        fields = ("name", "tags", "description", "notes")
+        sql += " AND (" + " OR ".join(rf"p.{f} LIKE ? ESCAPE '\'" for f in fields) + ")"
+        args += ["%" + re.sub(r"([\\%_])", r"\\\1", q) + "%"] * len(fields)
     if material:
         sql += " AND p.material = ?"
         args.append(material)
@@ -907,11 +782,32 @@ def download(file_id):
 
 # ---------- Printers ----------
 
-IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$|^[A-Za-z0-9.-]+$")
+HOST_LABEL = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+
+
+def valid_address(text):
+    """An IPv4 address or a host name."""
+    labels = text.split(".")
+    if len(text) > 253 or not all(HOST_LABEL.fullmatch(p) for p in labels):
+        return False
+    if not labels[-1].isdigit():
+        return True
+    try:   # a name cannot end in a number, so this has to be an address
+        ipaddress.IPv4Address(text)
+    except ValueError:
+        return False
+    return True
+
+
+def printer_errors(data):
+    if not data["name"]:
+        return "Give the printer a name."
+    if data["ip"] and not valid_address(data["ip"]):
+        return f"'{data['ip'][:60]}' is not a valid IP address or host name. Nothing was saved."
+    return None
 
 
 def printer_from_form(form):
-    ip = form.get("ip", "").strip()
     return {
         "name": form.get("name", "").strip(),
         "model": form.get("model", "").strip(),
@@ -920,7 +816,7 @@ def printer_from_form(form):
         "camera_type": (form.get("camera_type") if form.get("bambu_model") == "other"
                         and form.get("camera_type") in bambu_models.CAMERA_TYPES else None),
         "notes": form.get("notes", "").strip(),
-        "ip": ip if IP_RE.match(ip) else "",
+        "ip": form.get("ip", "").strip(),
         "serial": re.sub(r"[^A-Za-z0-9]", "", form.get("serial", "")),
         # left empty = keep the current access code (it is never put back into the form)
         "access_code": form.get("access_code", "").strip(),
@@ -979,8 +875,9 @@ def printers():
 def new_printer():
     if request.method == "POST":
         data = printer_from_form(request.form)
-        if not data["name"]:
-            flash("Give the printer a name.", "warn")
+        error = printer_errors(data)
+        if error:
+            flash(error, "warn")
             return render_template("printer_form.html", pr=public_printer(data))
         data["photo"] = save_printer_photo(request.files.get("photo"))
         data["access_code"] = data["access_code"] or None
@@ -1001,8 +898,9 @@ def edit_printer(printer_id):
         abort(404)
     if request.method == "POST":
         data = printer_from_form(request.form)
-        if not data["name"]:
-            flash("Give the printer a name.", "warn")
+        error = printer_errors(data)
+        if error:
+            flash(error, "warn")
             return render_template("printer_form.html", pr=public_printer({**data, "id": printer_id, "photo": pr["photo"]}))
         if pr["access_code"] and data["ip"] and data["ip"] != pr["ip"] and not data["access_code"]:
             # otherwise the stored code would be sent to whatever answers at the new address

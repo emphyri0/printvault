@@ -207,8 +207,8 @@ class TrackerTest(unittest.TestCase):
 
     def test_ams_units_parsing(self):
         units = ml.ams_units(self.ams_report()["print"])
-        self.assertEqual(units, [{"id": "0", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6},
-                                 {"id": "1", "humidity_pct": None, "humidity_level": 5, "temp": None}])
+        self.assertEqual(units, [{"id": "0", "name": "AMS A", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6},
+                                 {"id": "1", "name": "AMS B", "humidity_pct": None, "humidity_level": 5, "temp": None}])
         self.assertEqual(ml.ams_units({"ams": {"ams": [{"id": "0", "temp": "x"}, "rommel"]}}), [])
         self.assertEqual(ml.ams_units({}), [])
 
@@ -240,7 +240,7 @@ class TrackerTest(unittest.TestCase):
     def test_live_has_ams(self):
         t = self.tracker()
         t.handle(self.ams_report(gcode_state="IDLE"))
-        self.assertEqual(t.live()["ams"][0], {"id": "0", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6})
+        self.assertEqual(t.live()["ams"][0], {"id": "0", "name": "AMS A", "humidity_pct": 23.0, "humidity_level": 3, "temp": 24.6})
 
     def test_ignores_non_report(self):
         t = self.tracker()

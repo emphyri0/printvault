@@ -233,6 +233,29 @@ def nozzle_type_name(code):
     return material + (", high-flow" if code[1] in ("H", "E") else "")
 
 
+def _dict_list(value):
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def ams_list(state):
+    """The AMS units in the report."""
+    return _dict_list(_get(state, "ams", "ams"))
+
+
+def trays(unit):
+    return _dict_list(unit.get("tray"))
+
+
+def ams_name(ams_id):
+    """0 → 'AMS A', 128 → 'AMS HT 1'; other ids are shown as they are."""
+    i = as_int(ams_id)
+    if i is not None and 0 <= i < 4:
+        return f"AMS {'ABCD'[i]}"
+    if i is not None and 128 <= i < 136:
+        return f"AMS HT {i - 127}"
+    return f"AMS {ams_id}" if ams_id is not None else "AMS"
+
+
 def active_tray(state):
     """The AMS slot (or the external spool) that is feeding filament now, or None."""
     now = as_int(_get(state, "ams", "tray_now"))
@@ -246,10 +269,12 @@ def active_tray(state):
     else:
         unit, tray = (now >> 2, now & 3) if now < 128 else (now, 0)   # AMS HT: own id, one slot
         slot = {}
-        for u in _get(state, "ams", "ams") or []:
+        for u in ams_list(state):
             if as_int(u.get("id")) == unit:
-                slot = next((t for t in u.get("tray") or [] if as_int(t.get("id")) == tray), {})
-        label = (f"AMS {'ABCD'[unit]}{tray + 1}" if unit < 4 else f"AMS HT {unit - 127}") if unit is not None else ""
+                slot = next((t for t in trays(u) if as_int(t.get("id")) == tray), {})
+        label = ams_name(unit)
+        if unit < 128:
+            label += f"{tray + 1}" if unit < 4 else f" slot {tray + 1}"
     color = str(slot.get("tray_color") or "")[:6]
     return {"label": label, "ams_id": unit, "tray_id": tray,
             "type": slot.get("tray_type") or None, "name": slot.get("tray_sub_brands") or None,

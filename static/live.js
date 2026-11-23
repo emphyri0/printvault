@@ -154,17 +154,13 @@
     }
     return svg;
   }
-  function amsName(id) {
-    const n = Number(id);
-    return Number.isInteger(n) && n >= 0 && n < 4 ? "AMS " + "ABCD"[n] : "AMS " + id;
-  }
   function amsList(p) {
     const ams = p.ams || [];
     if (!ams.length) return null;
     const list = el("div", "amslist");
     for (const u of ams) {
       const row = el("div", "amsrow");
-      row.append(el("span", "amsname", amsName(u.id)));
+      row.append(el("span", "amsname", u.name));
       const hum = u.humidity_pct != null ? `${fmt(u.humidity_pct)}%` : (u.humidity_level != null ? `level ${u.humidity_level}` : "–");
       const h = el("span", "num");
       h.append(icon("drop"), el("span", "sr", "Humidity "), hum);
@@ -295,10 +291,11 @@
     vbtn.addEventListener("click", () => { video ? stopVideo() : startVideo(); });
     // no stream to a tab nobody is looking at
     let resume = false;
-    document.addEventListener("visibilitychange", () => {
+    const onVisibility = () => {
       if (document.hidden && video) { resume = true; stopVideo(); }
       else if (!document.hidden && resume) { resume = false; startVideo(); }
-    });
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return {
       el: box,
       set(kind, url, fb) {   // kind: "snap" (url = printer id), "img" or null
@@ -308,7 +305,12 @@
         want = kind ? {kind, url, key} : null;
         apply();
       },
-      stop() { clearInterval(timer); video = false; img.removeAttribute("src"); },
+      stop() {   // the box is removed from the page
+        document.removeEventListener("visibilitychange", onVisibility);
+        clearInterval(timer);
+        video = false;
+        img.removeAttribute("src");
+      },
     };
   }
   function chooseMedia(p, media) {

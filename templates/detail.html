@@ -131,7 +131,7 @@
   <ul class="ams">
     {% for t in ams %}{% set c = t.tray_color|css_color %}
     <li><i class="sw big" style="background:{{ c or 'transparent' }}"></i>
-      <span><b>{{ t.tray_type or "–" }}</b><small class="num">AMS {{ t.ams_id|int + 1 }} · slot {{ t.tray_id|int + 1 }}{% if c %} · {{ c }}{% endif %}</small></span></li>
+      <span><b>{{ t.tray_type or "–" }}</b><small class="num">{{ t.ams_id|ams_name }} · slot {{ t.tray_id|int + 1 }}{% if c %} · {{ c }}{% endif %}</small></span></li>
     {% endfor %}
   </ul>
 </section>
