@@ -95,6 +95,8 @@ Printvault only **listens**: it connects to the printer's local MQTT broker (`mq
 
 - `PREPARE`/`RUNNING` → a print with status *Printing*; `FINISH` → *Succeeded*; `FAILED` → *Failed* with the printer's error code.
 - At the start of a print, empty fields are filled in: nozzle diameter and type, plate, plate x of y, speed profile, spaghetti detection and first layer inspection. What you filled in yourself is kept.
+- Every report, complete or partial, is merged into a status per printer, so models that mostly send changes work too. After a restart of the listener the status fills up again as reports come in.
+- A print that you delete while it is running stays deleted; the next one is recorded normally.
 - If the listener restarts during a print, the print is resumed (recognised by `task_id`). If it missed the end, the print gets status *Unknown*.
 - AMS humidity and temperature are stored at most every 10 minutes per unit.
 - Log: `docker compose logs -f printvault-mqtt`.

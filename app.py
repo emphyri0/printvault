@@ -256,7 +256,7 @@ def form_to_print(form):
         "nozzle": num(form.get("nozzle")),
         "status": status if status in STATUSES else "planned",
         "tags": ", ".join(t.strip() for t in form.get("tags", "").split(",") if t.strip()),
-        "notes": form.get("notes", "").strip(),
+        "notes": form.get("notes", "").replace("\r\n", "\n").strip(),
         "printed_on": form.get("printed_on") or None,
         "printer_id": num(form.get("printer_id"), int),
         "source_url": (lambda u: u if re.match(r"^https?://", u, re.I) else None)(form.get("source_url", "").strip()),
@@ -275,6 +275,29 @@ def form_to_print(form):
         "fail_reason": reason if failed and reason in FAIL_REASONS else None,
         "fail_note": (form.get("fail_note", "").strip() or None) if failed else None,
     }
+
+
+def form_base(p):
+    """The values a print had when its edit form was opened (hidden field 'base')."""
+    return json.dumps({k: p[k] for k in form_to_print({})})
+
+
+def keep_changes(data, base, current):
+    """Fields that were not touched in the form, but changed in the database since it was opened (the
+    listener finished the print, for example), keep the value from the database."""
+    def norm(v):
+        return (v.replace("\r\n", "\n").strip() or None) if isinstance(v, str) else v
+    try:
+        base = json.loads(base or "{}")
+    except ValueError:
+        return
+    if not isinstance(base, dict):
+        return
+    for k in data:
+        if k in base and norm(data[k]) == norm(base[k]) and norm(current[k]) != norm(base[k]):
+            data[k] = current[k]
+    if data["status"] != "failed":
+        data["fail_reason"] = data["fail_note"] = None
 
 
 SLICER_FIELDS = {"material": "material", "color": "colour", "filament_g": "weight",
@@ -732,7 +755,9 @@ def edit_print(print_id):
         data = form_to_print(request.form)
         if not data["name"]:
             flash("Give the print a name.", "warn")
-            return render_template("form.html", p={**data, "id": print_id}, materials=MATERIALS, statuses=STATUSES)
+            return render_template("form.html", p={**data, "id": print_id}, base=request.form.get("base"),
+                                   materials=MATERIALS, statuses=STATUSES)
+        keep_changes(data, request.form.get("base"), p)
         db = get_db()
         mw_msg = enrich_from_makerworld(db, print_id, p, data)
         db.execute(
@@ -745,17 +770,18 @@ def edit_print(print_id):
         if mw_msg:
             flash(*mw_msg)
         return redirect(url_for("show_print", print_id=print_id))
-    return render_template("form.html", p=p, materials=MATERIALS, statuses=STATUSES)
+    return render_template("form.html", p=p, base=form_base(p), materials=MATERIALS, statuses=STATUSES)
 
 
 @app.route("/print/<int:print_id>/delete", methods=["POST"])
 def delete_print(print_id):
     get_print(print_id)
     db = get_db()
-    for f in db.execute("SELECT stored_name FROM files WHERE print_id = ?", (print_id,)):
-        remove_upload(f["stored_name"])
+    files = db.execute("SELECT stored_name FROM files WHERE print_id = ?", (print_id,)).fetchall()
     db.execute("DELETE FROM prints WHERE id = ?", (print_id,))
     db.commit()
+    for f in files:   # only once the database change is certain
+        remove_upload(f["stored_name"])
     flash("Print deleted.", "ok")
     return redirect(url_for("index"))
 
@@ -790,9 +816,9 @@ def delete_file(file_id):
     f = db.execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
     if f is None:
         abort(404)
-    remove_upload(f["stored_name"])
     db.execute("DELETE FROM files WHERE id = ?", (file_id,))
     db.commit()
+    remove_upload(f["stored_name"])
     return redirect(url_for("show_print", print_id=f["print_id"]))
 
 
@@ -944,7 +970,6 @@ def edit_printer(printer_id):
         photo = pr["photo"]
         new_photo = save_printer_photo(request.files.get("photo"))
         if new_photo or request.form.get("remove_photo"):
-            remove_upload(photo)
             photo = new_photo
         if not data["access_code"]:
             data["access_code"] = pr["access_code"]
@@ -952,6 +977,8 @@ def edit_printer(printer_id):
         db.execute(f"UPDATE printers SET {', '.join(k + ' = ?' for k in data)} WHERE id = ?",
                    [*data.values(), printer_id])
         db.commit()
+        if photo != pr["photo"]:
+            remove_upload(pr["photo"])
         flash("Printer saved.", "ok")
         return redirect(url_for("printers"))
     return render_template("printer_form.html", pr=public_printer(pr))
@@ -963,10 +990,10 @@ def delete_printer(printer_id):
     pr = db.execute("SELECT * FROM printers WHERE id = ?", (printer_id,)).fetchone()
     if pr is None:
         abort(404)
-    remove_upload(pr["photo"])
     db.execute("UPDATE prints SET printer_id = NULL WHERE printer_id = ?", (printer_id,))
     db.execute("DELETE FROM printers WHERE id = ?", (printer_id,))
     db.commit()
+    remove_upload(pr["photo"])
     flash("Printer deleted. Its prints are kept.", "ok")
     return redirect(url_for("printers"))
 

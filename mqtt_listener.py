@@ -7,6 +7,7 @@ kept in memory and served as JSON at http://<LIVE_HOST>:<LIVE_PORT>/live.
 
 Run:  python mqtt_listener.py
 """
+import copy
 import json
 import re
 import logging
@@ -50,14 +51,44 @@ def now_local():
     return datetime.now(TZ).replace(microsecond=0)
 
 
-def deep_merge(dst, src):
-    """Merges a (possibly partial) status message into the known status."""
+def _by_id(items):
+    """{id: item} when every item is a dict with its own id, else None."""
+    if not isinstance(items, list) or not all(isinstance(i, dict) and i.get("id") is not None for i in items):
+        return None
+    out = {str(i["id"]): i for i in items}
+    return out if len(out) == len(items) else None
+
+
+def deep_merge(dst, src, full=False):
+    """Merges a (possibly partial) status message into the known status. Lists whose items have an id (AMS
+    units, trays, nozzles) are merged per item, unless the message is complete; other lists are replaced."""
     for k, v in src.items():
         if isinstance(v, dict) and isinstance(dst.get(k), dict):
-            deep_merge(dst[k], v)
-        else:
+            deep_merge(dst[k], v, full)
+            continue
+        old, new = (None, None) if full else (_by_id(dst.get(k)), _by_id(v))
+        if not old or not new:
             dst[k] = v
+            continue
+        for i, item in new.items():
+            if i in old and set(item) - {"id", "state"}:
+                deep_merge(old[i], item)
+            else:   # a new item, or an emptied slot: only its id (and state) are sent
+                old[i] = item
+        dst[k] = list(old.values())
     return dst
+
+
+def drop_missing_ams(state):
+    """Removes AMS units that ams_exist_bits (bit n = unit n) says are gone: a partial message does not."""
+    ams = state.get("ams")
+    if not isinstance(ams, dict) or not isinstance(ams.get("ams"), list):
+        return
+    try:
+        bits = int(str(ams["ams_exist_bits"]), 16)
+        ams["ams"] = [u for u in ams["ams"] if int(u["id"]) >= 4 or bits >> int(u["id"]) & 1]
+    except (KeyError, TypeError, ValueError):
+        pass   # bits not sent, or ids we do not know: leave the list alone
 
 
 def ams_slots(state):
@@ -121,6 +152,9 @@ class PrinterTracker:
         self.gcode_state = None   # last seen gcode_state (None = nothing received yet)
         self.print_id = None      # the 'printing' record we are following
         self.task_id = None
+        self.deleted = False      # the print we followed was deleted: do not follow the rest of it
+        self.last_task = None     # task_id while the printer was not printing (so of the previous job)
+        self.provisional = None   # name given at the start, while the job data may still arrive in parts
         self.connected = False
         self.last_message = None
         self.ams_saved = {}       # ams_id -> time of the last stored reading
@@ -135,28 +169,43 @@ class PrinterTracker:
         if not isinstance(report, dict):
             return
         with self.lock:
-            deep_merge(self.state, report)
+            # msg 0 = complete report, 1 = only what changed; some models send few complete ones
+            deep_merge(self.state, copy.deepcopy(report), full=report.get("msg") == 0)
+            drop_missing_ams(self.state)
             self.last_message = self.clock()
-            self._record_ams()
             new = self.state.get("gcode_state")
             task = str(self.state.get("task_id") or "") or None
             if new != self.gcode_state:
-                prev, self.gcode_state = self.gcode_state, new
+                prev = self.gcode_state
                 log.info("printer %s: %s -> %s", self.printer_id, prev, new)
-                self._transition(prev, new, task)
-            elif new in ACTIVE and self.print_id and task and self.task_id and task != self.task_id:
+                self._transition(prev, new, task, report)
+                self.gcode_state = new   # only now: after an error the next message tries again
+            elif new in ACTIVE and task and self.task_id and task != self.task_id and (self.print_id or self.deleted):
                 # New job without having seen the previous one end (e.g. during a connection outage).
-                self._close_stale(self.print_id)
-                self.print_id = None
-                self._start(task, first_seen=False)
-            if self.print_id and self.gcode_state in ACTIVE:
+                self._end_unseen()
+                self._start(task, first_seen=False, report=report)
+            elif self.provisional is not None and self.print_id:
+                self._complete_job(report)
+            if new not in ACTIVE:
+                self.last_task, self.deleted, self.provisional = task, False, None
+            elif self.print_id:
                 self._save_settings(self.print_id)
                 self._record_sample(self.print_id)
+            self._record_ams()   # last: an error here must not hold up the tracking
 
-    def _transition(self, prev, new, task):
+    def _end_unseen(self):
+        if self.print_id is not None:
+            self._close_stale(self.print_id)
+        self.print_id = self.task_id = None
+        self.deleted = False
+
+    def _transition(self, prev, new, task, report):
         if new in ACTIVE:
-            if self.print_id is None:
-                self._start(task, first_seen=prev is None)
+            if self.print_id is not None and prev is not None and prev not in ACTIVE \
+                    and not (self.task_id and self.task_id != "0" and task == self.task_id):
+                self._end_unseen()   # task_id is 0 for every LAN print, so it does not identify the job
+            if self.print_id is None and not self.deleted:
+                self._start(task, first_seen=prev is None, report=report)
         elif new in DONE:
             target = self.print_id
             if target is None and prev is None:
@@ -184,13 +233,15 @@ class PrinterTracker:
                 self._close_stale(r["id"])
         return match
 
-    def _start(self, task, first_seen):
+    def _start(self, task, first_seen, report):
+        if not first_seen and "task_id" not in report and task == self.last_task:
+            task = None   # still the previous job's; the new one follows in a later, partial report
         existing = self._find_running(task)
         now = self.clock()
         name = (self.state.get("subtask_name") or "").strip()[:200] or "Untitled print"
         with connect_db(self.db_path) as db:
             if existing is not None:
-                self.print_id = existing
+                print_id = existing
                 db.execute("UPDATE prints SET task_id = COALESCE(task_id, ?) WHERE id = ?", (task, existing))
                 log.info("printer %s: resuming print %s", self.printer_id, existing)
             else:
@@ -200,10 +251,31 @@ class PrinterTracker:
                     "INSERT INTO prints (name, status, printer_id, printed_on, started_at, task_id, source, notes) "
                     "VALUES (?, 'printing', ?, ?, ?, ?, 'mqtt', ?)",
                     (name, self.printer_id, now.date().isoformat(), now.isoformat(), task, notes))
-                self.print_id = cur.lastrowid
-                log.info("printer %s: new print %s (%s)", self.printer_id, self.print_id, name)
-            self._save_ams(db, self.print_id)
-        self.task_id = task
+                print_id = cur.lastrowid
+                log.info("printer %s: new print %s (%s)", self.printer_id, print_id, name)
+            self._save_ams(db, print_id)
+        self.print_id, self.task_id = print_id, task   # after the commit
+        self.provisional = None if existing is not None or {"task_id", "subtask_name"} <= set(report) else name
+
+    def _complete_job(self, report):
+        """Fills in the name and task_id when a partial report brings them after the start. A name that
+        the user changed in the meantime stays."""
+        name = str(report.get("subtask_name") or "").strip()[:200]
+        task = str(report.get("task_id") or "") or None
+        with connect_db(self.db_path) as db:
+            if name:
+                db.execute("UPDATE prints SET name = ? WHERE id = ? AND name = ?", (name, self.print_id, self.provisional))
+            if task and self.task_id is None:
+                db.execute("UPDATE prints SET task_id = ? WHERE id = ?", (task, self.print_id))
+        if task and self.task_id is None:
+            self.task_id = task
+        if name:
+            self.provisional = name if self.task_id is None else None
+
+    def _forget(self, print_id):
+        log.info("printer %s: print %s was deleted while printing; the rest of it is not recorded",
+                 self.printer_id, print_id)
+        self.print_id, self.deleted = None, True
 
     def _finish(self, print_id, status, seen_live=True):
         now = self.clock()
@@ -302,9 +374,13 @@ class PrinterTracker:
             return
         if all(point[k] is None for k in ("nozzle", "bed", "chamber", "stage")):
             return
-        with connect_db(self.db_path) as db:
-            db.execute(f"INSERT INTO print_samples (print_id, recorded_at, {', '.join(point)}) "
-                       f"VALUES (?, ?, {', '.join('?' * len(point))})", (print_id, now.isoformat(), *point.values()))
+        try:
+            with connect_db(self.db_path) as db:
+                db.execute(f"INSERT INTO print_samples (print_id, recorded_at, {', '.join(point)}) "
+                           f"VALUES (?, ?, {', '.join('?' * len(point))})", (print_id, now.isoformat(), *point.values()))
+        except sqlite3.IntegrityError:   # foreign key: the print no longer exists
+            self._forget(print_id)
+            return
         self.last_sample = (print_id, now, point["stage"])
 
     def _close_stale(self, print_id):
@@ -486,7 +562,7 @@ class Supervisor:
             if cfg is None or (cfg["ip"], cfg["serial"], cfg["access_code"]) != key:
                 conn.stop()
                 del self.connections[pid]
-                if cfg is None:
+                if cfg is None or cfg["serial"] != key[1]:   # another printer: forget this one's status
                     self.trackers.pop(pid, None)
         for pid, cfg in wanted.items():
             tracker = self.trackers.get(pid)
@@ -523,16 +599,19 @@ class Supervisor:
             log.warning("printer %s: camera image for print %s failed: %s",
                         cfg["id"], print_id, camera.redact(e, cfg["access_code"]))
 
+    def tick(self):
+        try:
+            self.sync()
+        except Exception:
+            log.exception("reading the printer settings failed")
+        try:
+            maintenance.check_and_notify(self.db_path, self.notifier.deliver)
+        except Exception:
+            log.exception("checking maintenance failed")
+
     def run(self):
         while True:
-            try:
-                self.sync()
-            except Exception:
-                log.exception("reading the printer settings failed")
-            try:
-                maintenance.check_and_notify(self.db_path, self.notifier)
-            except Exception:
-                log.exception("checking maintenance failed")
+            self.tick()
             time.sleep(RELOAD_SECONDS)
 
 

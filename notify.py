@@ -124,9 +124,16 @@ class Notifier:
             self._send(cfg, title, message, tags, priority)
         return True
 
+    def deliver(self, kind, title, message, tags=(), priority=None):
+        """Sends now and waits for it. True only when the server accepted the notification."""
+        cfg = self.settings()
+        return enabled(cfg, kind) and self._send(cfg, title, message, tags, priority)
+
     def _send(self, cfg, title, message, tags, priority):
         try:
             post(cfg, title, message, tags, priority, urlopen=self.urlopen)
-            log.info("ntfy notification sent: %s", title)
         except NotifyError as e:
             log.warning("%s", e)
+            return False
+        log.info("ntfy notification sent: %s", title)
+        return True

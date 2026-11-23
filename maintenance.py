@@ -87,7 +87,8 @@ def tasks_for_printer(db, printer_id, now=None):
 
 def check_and_notify(db_path, notifier, now=None):
     """Sends one notification each time a task becomes due. A task that is not (or no longer) due
-    is re-armed so that it notifies again the next time it becomes due."""
+    is re-armed so that it notifies again the next time it becomes due. `notifier` returns whether the
+    notification was sent; if not, the next check tries again."""
     if notifier is None:
         return 0
     now = now or now_local()
@@ -102,7 +103,9 @@ def check_and_notify(db_path, notifier, now=None):
                 if notifier("maintenance", f"Maintenance: {t['name']}",
                             f"{t['printer_name']}: {describe(t, st)}", tags=["wrench"]):
                     db.execute("UPDATE maintenance_tasks SET notified_at = ? WHERE id = ?", (now.isoformat(), t["id"]))
+                    db.commit()   # do not keep the database locked while the next one is being sent
                     sent += 1
             elif not st["due"] and t["notified_at"]:
                 db.execute("UPDATE maintenance_tasks SET notified_at = NULL WHERE id = ?", (t["id"],))
+                db.commit()
     return sent

@@ -34,6 +34,7 @@
 {% endif %}
 
 <form class="form" method="post" enctype="multipart/form-data">
+  {% if p.id %}<input type="hidden" name="base" value="{{ base or '' }}">{% endif %}
   <label class="wide">Name *<input name="name" value="{{ p.name or '' }}" required {% if not p.id %}autofocus{% endif %}></label>
   <label class="wide">Description<input name="description" value="{{ p.description or '' }}" placeholder="e.g. Benchy, desk cable holder…"></label>
 
