@@ -23,6 +23,7 @@ import camera
 import icons
 import maintenance
 import notify
+import security
 import slicer
 import thumbs
 from bambu_errors import error_code
@@ -51,6 +52,7 @@ LABELS = {
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
+security.init_app(app, os.environ.get("ALLOWED_HOSTS"))
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "200")) * 1024 * 1024
 
 
@@ -282,6 +284,10 @@ SLICER_FIELDS = {"material": "material", "color": "colour", "filament_g": "weigh
 
 
 def store_bytes(print_id, kind, content, ext, original_name):
+    if kind == "photo":
+        ext = thumbs.sniff(content)
+        if ext is None:
+            return None
     stored = f"{uuid.uuid4().hex}.{ext}"
     with open(os.path.join(UPLOAD_DIR, stored), "wb") as fh:
         fh.write(content)
@@ -296,7 +302,7 @@ def store_bytes(print_id, kind, content, ext, original_name):
 
 def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite_name=False):
     """Reads a 3mf/gcode file and updates the print. Returns a short summary."""
-    parsed = slicer.parse(path, original_name)
+    parsed = slicer.parse(path, original_name, plate_index)
     plates = parsed["plates"]
     if plate_index is None:
         plate_index = plates[0]["index"]
@@ -327,6 +333,13 @@ def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite
     return found, plate_info
 
 
+def photo_type(upload):
+    """Extension that matches the content of an uploaded photo, or None when it is not a photo."""
+    ext = thumbs.sniff(upload.stream.read(thumbs.SNIFF_BYTES))
+    upload.stream.seek(0)
+    return ext
+
+
 def save_uploads(print_id, uploads):
     db = get_db()
     skipped = []
@@ -336,6 +349,10 @@ def save_uploads(print_id, uploads):
         ext = ext_of(f.filename)
         if ext in PHOTO_EXT:
             kind = "photo"
+            ext = photo_type(f)
+            if ext is None:
+                skipped.append(f.filename)
+                continue
         elif ext in MODEL_EXT:
             kind = "model"
         else:
@@ -352,7 +369,7 @@ def save_uploads(print_id, uploads):
             THUMBS.add(stored)
     db.commit()
     if skipped:
-        flash("Skipped (unknown file type): " + ", ".join(skipped), "warn")
+        flash("Skipped (unknown file type or not a real photo): " + ", ".join(skipped), "warn")
 
 
 # Automatic thumbnails (from the slicer or MakerWorld); everything else is a real photo.
@@ -854,8 +871,8 @@ def save_printer_photo(upload):
     """Stores an uploaded printer photo and returns its stored_name (or None)."""
     if not upload or not upload.filename:
         return None
-    ext = ext_of(upload.filename)
-    if ext not in PHOTO_EXT:
+    ext = photo_type(upload) if ext_of(upload.filename) in PHOTO_EXT else None
+    if ext is None:
         flash("Printer photo skipped: only jpg, png, webp or gif.", "warn")
         return None
     stored = f"{uuid.uuid4().hex}.{ext}"
@@ -919,6 +936,11 @@ def edit_printer(printer_id):
         if not data["name"]:
             flash("Give the printer a name.", "warn")
             return render_template("printer_form.html", pr=public_printer({**data, "id": printer_id, "photo": pr["photo"]}))
+        if pr["access_code"] and data["ip"] and data["ip"] != pr["ip"] and not data["access_code"]:
+            # otherwise the stored code would be sent to whatever answers at the new address
+            flash("The IP address changed: enter the access code again. Nothing was saved.", "warn")
+            return render_template("printer_form.html", pr=public_printer(
+                {**data, "id": printer_id, "photo": pr["photo"], "access_code": None}))
         photo = pr["photo"]
         new_photo = save_printer_photo(request.files.get("photo"))
         if new_photo or request.form.get("remove_photo"):
@@ -956,6 +978,10 @@ cameras = camera.CameraManager()
 # Snapshots are kept ~20 s per printer (a failed attempt too), so that several open tabs
 # together make at most one connection to the printer every 20 s.
 SNAPSHOT_CACHE_SECONDS = 20
+# Each live stream keeps one of gunicorn's 8 threads (see Dockerfile) busy; leave some for the pages.
+MAX_STREAMS = 4
+_streams = 0
+_streams_lock = threading.Lock()
 _snapshots = {}                   # printer_id -> (rtsp url, time, jpeg or CameraError)
 _snapshot_locks = {}
 _snapshot_locks_guard = threading.Lock()
@@ -996,16 +1022,33 @@ def camera_printer(printer_id):
 
 @app.route("/printers/<int:printer_id>/camera.mjpg")
 def camera_stream(printer_id):
+    global _streams
     pr, route = camera_printer(printer_id)
+    with _streams_lock:
+        if _streams >= MAX_STREAMS:
+            return Response("Too many live videos are open; close one and try again.", status=503, mimetype="text/plain",
+                            headers={"Cache-Control": "no-store"})
+        _streams += 1
     cam = cameras.get(printer_id, pr["ip"], pr["access_code"], route)
+    released = False
+
+    def release():   # may be called more than once
+        global _streams
+        nonlocal released
+        with _streams_lock:
+            if not released:
+                released = True
+                _streams -= 1
 
     def generate():
         for frame in cam.frames():
             yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n" % len(frame)
                    + frame + b"\r\n")
 
-    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame",
+    resp = Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame",
                     headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    resp.call_on_close(release)   # also when the stream was never read (HEAD request, client gone)
+    return resp
 
 
 @app.route("/printers/<int:printer_id>/snapshot.jpg")
@@ -1161,13 +1204,18 @@ def settings():
             values["ntfy_token"] = ""
         elif token:
             values["ntfy_token"] = token
+        elif cfg.get("ntfy_token") and notify.server_of(values.get("ntfy_url", cfg.get("ntfy_url"))) \
+                != notify.server_of(cfg.get("ntfy_url")):
+            values["ntfy_token"] = ""   # never send the stored token to another server
+            problems.append("The ntfy server changed, so the access token was cleared. Enter it again if the new "
+                            "server needs one.")
         for key in notify.KINDS.values():
             values[key] = "1" if f.get(key) else "0"
         notify.save_settings(db, values)
         db.commit()
         for p in problems:
             flash(p, "warn")
-        flash("Settings saved." + (" Other fields were not changed." if problems else ""),
+        flash("Settings saved.",
               "warn" if problems else "ok")
         return redirect(url_for("settings"))
     public = {k: v for k, v in cfg.items() if k != "ntfy_token"}
@@ -1244,9 +1292,28 @@ class MakerWorldError(Exception):
     pass
 
 
+def mw_redirect_allowed(url):
+    parts = urllib.parse.urlsplit(url)
+    host = parts.hostname or ""
+    return parts.scheme == "https" and parts.netloc.lower() == host and (
+        host in ("makerworld.com", "www.makerworld.com") or host.endswith(".bblmw.com"))
+
+
+class _MakerWorldRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows redirects only to MakerWorld itself, never to another (e.g. internal) host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not mw_redirect_allowed(newurl):
+            return None
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_mw_opener = urllib.request.build_opener(_MakerWorldRedirects)
+
+
 def _http_get(url, limit):
     req = urllib.request.Request(url, headers={"User-Agent": MW_UA, "Accept-Language": "en"})
-    with urllib.request.urlopen(req, timeout=20) as resp:
+    with _mw_opener.open(req, timeout=20) as resp:
         body = resp.read(limit + 1)
     if len(body) > limit:
         raise MakerWorldError("Response from MakerWorld is too large.")
@@ -1332,7 +1399,9 @@ def fetch_makerworld(url):
         ext = ext_of(cover_url.split("?")[0])
         if ext in PHOTO_EXT:
             try:
-                cover = (_http_get(cover_url, MAX_COVER_BYTES), ext)
+                content = _http_get(cover_url, MAX_COVER_BYTES)
+                ext = thumbs.sniff(content)
+                cover = (content, ext) if ext else None
             except Exception:
                 cover = None
     return data, cover
@@ -1414,4 +1483,4 @@ init_db()
 THUMBS.backfill()
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8100, debug=True)
+    app.run(host="127.0.0.1", port=8100)

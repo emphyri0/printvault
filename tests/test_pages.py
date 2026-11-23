@@ -190,7 +190,8 @@ class PagesTest(unittest.TestCase):
         original = app.app.wsgi_app
         app.app.wsgi_app = app.apply_proxy_fix(original, 1)
         try:
-            html = self.c.get("/print/1", headers=headers).get_data(as_text=True)
+            with mock.patch.dict(app.app.config, {"ALLOWED_HOSTS": {"printvault.example"}}):
+                html = self.c.get("/print/1", headers=headers).get_data(as_text=True)
             self.assertIn("bambustudio://open?file=https%3A%2F%2Fprintvault.example%2Fdownload%2F11", html)
         finally:
             app.app.wsgi_app = original
@@ -224,7 +225,7 @@ class PagesTest(unittest.TestCase):
 
     def test_upload_queues_thumbnails(self):
         import io
-        self.c.post("/print/2/photos", data={"photos": (io.BytesIO(b"\xff\xd8x"), "new.jpg")},
+        self.c.post("/print/2/photos", data={"photos": (io.BytesIO(b"\xff\xd8\xffx"), "new.jpg")},
                     content_type="multipart/form-data")
         self.assertTrue(self.queued.called)
         self.assertTrue(self.queued.call_args[0][0].endswith(".jpg"))

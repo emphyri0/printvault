@@ -7,7 +7,7 @@
   <p>{{ text }}</p>
   <div class="actions">
     <a class="btn primary" href="{{ url_for('index') }}">{{ icon('grid') }}<span>All prints</span></a>
-    <button class="btn ghost" type="button" onclick="history.back()">{{ icon('back') }}<span>Go back</span></button>
+    <button class="btn ghost" type="button" data-back>{{ icon('back') }}<span>Go back</span></button>
   </div>
 </section>
 {% endblock %}

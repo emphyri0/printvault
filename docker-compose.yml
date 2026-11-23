@@ -11,9 +11,9 @@ services:
     environment:
       LIVE_URL: http://printvault-mqtt:8101/live
     ports:
-      # 0.0.0.0: reachable from the LAN. Printvault has no login: only on a trusted network
-      # (use "127.0.0.1:8100:5000" to allow only this machine, e.g. behind a reverse proxy)
-      - "0.0.0.0:8100:5000"
+      # Only this machine by default. PRINTVAULT_BIND=0.0.0.0 in .env opens it to the LAN;
+      # Printvault has no login, so only do that on a network you trust.
+      - "${PRINTVAULT_BIND:-127.0.0.1}:8100:5000"
     volumes:
       - ./data:/data
     networks:

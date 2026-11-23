@@ -128,7 +128,7 @@ class Logic(unittest.TestCase):
             self.assertFalse(thumbs.is_photo(bad), bad)
 
     def test_no_metadata_and_no_upscaling_in_command(self):
-        cmd = thumbs.ffmpeg_cmd("in.jpg", "out.webp", 600)
+        cmd = thumbs.ffmpeg_cmd("in.jpg", "out.webp", 600, "jpg")
         self.assertIn("-map_metadata", cmd)
         self.assertEqual(cmd[cmd.index("-map_metadata") + 1], "-1")
         self.assertIn("min(600,iw)", cmd[cmd.index("-vf") + 1])
@@ -137,7 +137,8 @@ class Logic(unittest.TestCase):
     def test_missing_ffmpeg_is_logged(self):
         d = tempfile.mkdtemp()
         try:
-            open(os.path.join(d, "a.jpg"), "wb").close()
+            with open(os.path.join(d, "a.jpg"), "wb") as fh:
+                fh.write(b"\xff\xd8\xff")
             with mock.patch("subprocess.run", side_effect=FileNotFoundError("ffmpeg")), \
                     self.assertLogs("printvault.thumbs", "WARNING"):
                 self.assertFalse(thumbs.make(d, "a.jpg"))

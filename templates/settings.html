@@ -9,7 +9,7 @@
     <label>Server URL<input name="ntfy_url" value="{{ cfg.ntfy_url or '' }}" placeholder="https://ntfy.sh" autocomplete="off"></label>
     <label>Topic<input name="ntfy_topic" value="{{ cfg.ntfy_topic or '' }}" placeholder="e.g. printvault-x7k2m9" autocomplete="off"></label>
     <label>Access token (optional)<input type="password" name="ntfy_token" value="" autocomplete="new-password"
-      placeholder="{{ 'set, leave empty to keep' if cfg.has_token else 'tk_…' }}"></label>
+      placeholder="{{ 'set, leave empty to keep (a new server needs it again)' if cfg.has_token else 'tk_…' }}"></label>
     {% if cfg.has_token %}<label class="check"><input type="checkbox" name="clear_token" value="1"> Clear token</label>{% endif %}
   </fieldset>
   <fieldset class="wide">

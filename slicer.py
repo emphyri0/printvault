@@ -18,6 +18,8 @@ HEAD_BYTES = 6 * 1024 * 1024
 TAIL_BYTES = 1024 * 1024
 MAX_THUMB = 8 * 1024 * 1024
 MAX_MEMBER = 64 * 1024 * 1024
+MAX_SLICE_INFO = 4 * 1024 * 1024
+MODEL_HEAD = 200_000
 
 # Bambu: the bed temperature depends on the plate type
 BED_TEMP_KEYS = {
@@ -127,7 +129,7 @@ def _read(zf, name, limit=MAX_MEMBER):
     return zf.read(name)
 
 
-def parse_3mf(path):
+def parse_3mf(path, plate_index=None):
     try:
         zf = zipfile.ZipFile(path)
     except zipfile.BadZipFile:
@@ -146,14 +148,15 @@ def parse_3mf(path):
         result["filaments"] = filaments_from_cfg(cfg)
 
         if "3D/3dmodel.model" in names:
-            head = (_read(zf, "3D/3dmodel.model") or b"")[:200000].decode("utf-8", "ignore")
+            with zf.open("3D/3dmodel.model") as fh:
+                head = fh.read(MODEL_HEAD).decode("utf-8", "ignore")
             m = re.search(r'<metadata name="Title">([^<]+)</metadata>', head)
             if m and m.group(1).strip():
                 result["name"] = m.group(1).strip()
 
         if "Metadata/slice_info.config" in names:
             try:
-                root = ET.fromstring(_read(zf, "Metadata/slice_info.config") or b"<config/>")
+                root = ET.fromstring(_read(zf, "Metadata/slice_info.config", MAX_SLICE_INFO) or b"<config/>")
             except ET.ParseError:
                 root = ET.Element("config")
             for plate in root.findall("plate"):
@@ -181,20 +184,55 @@ def parse_3mf(path):
                                 if (m := re.match(r"Metadata/plate_(\d+)\.png$", n))}) or [1]
             result["plates"] = [{"index": i, "fields": {}, "filaments": []} for i in plate_ids]
 
-        for p in result["plates"]:
-            thumb = None
-            for cand in (f"Metadata/plate_{p['index']}.png", "Metadata/thumbnail.png",
-                         "Auxiliaries/.thumbnails/thumbnail_middle.png"):
-                if cand in names:
-                    data = _read(zf, cand, MAX_THUMB)
-                    if data:
-                        thumb = (data, "png")
-                        break
-            p["thumbnail"] = thumb
+        # only the chosen plate's thumbnail: a file may have many plates
+        p = find_plate(result["plates"], plate_index)
+        for cand in (f"Metadata/plate_{p['index']}.png", "Metadata/thumbnail.png",
+                     "Auxiliaries/.thumbnails/thumbnail_middle.png"):
+            if cand in names:
+                data = _read(zf, cand, MAX_THUMB)
+                if data:
+                    p["thumbnail"] = (data, "png")
+                    break
     return result
 
 
 # ---------- G-code ----------
+
+_KEY = re.compile(r"[a-zA-Z0-9_ \[\]^/()-]+")
+_THUMB_BEGIN = re.compile(r"thumbnail(?:_PNG)? begin (\d{1,5})x(\d{1,5}) \d+")
+_THUMB_END = re.compile(r"thumbnail(?:_PNG)? end")
+
+
+def scan_gcode(lines):
+    """({setting: value}, largest PNG thumbnail or None) from the comment lines. Line by line, so the time
+    grows linearly with the file whatever is in it."""
+    cfg, best, area, block = {}, None, 0, None   # block: (area, base64 lines) inside a thumbnail
+    for line in lines:
+        if not line.startswith(";"):
+            continue
+        text = line.lstrip("; ").strip()
+        if m := _THUMB_BEGIN.match(text):
+            block = (int(m.group(1)) * int(m.group(2)), [])
+            continue
+        if block is not None:
+            if not _THUMB_END.match(text):
+                block[1].append(text)
+                continue
+            if block[0] > area:
+                try:
+                    data = base64.b64decode("".join(block[1]))
+                except ValueError:
+                    data = b""
+                if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) <= MAX_THUMB:
+                    best, area = (data, "png"), block[0]
+            block = None
+            continue
+        cut = min((i for i in (text.find("="), text.find(":")) if i >= 0), default=-1)
+        key = text[:cut].strip() if cut > 0 else ""
+        if key and _KEY.fullmatch(key):
+            cfg.setdefault(key, text[cut + 1:].strip())
+    return cfg, best
+
 
 def parse_gcode(path):
     with open(path, "rb") as fh:
@@ -207,10 +245,7 @@ def parse_gcode(path):
             tail = fh.read()
     text = head.decode("utf-8", "ignore") + "\n" + tail.decode("utf-8", "ignore")
 
-    cfg = {}
-    for m in re.finditer(r"^;\s*([a-zA-Z0-9_ \[\]^/()-]+?)\s*[=:]\s*(.*?)\s*$", text, re.M):
-        key = m.group(1).strip()
-        cfg.setdefault(key, m.group(2))
+    cfg, thumb = scan_gcode(text.split("\n"))
 
     fields = {}
     t = (re.search(r";\s*total estimated time:\s*([^;\n]+)", text)
@@ -224,20 +259,6 @@ def parse_gcode(path):
         if parts:
             fields["filament_g"] = round(sum(parts), 2)
 
-    thumb = None
-    best = 0
-    for m in re.finditer(r";\s*thumbnail(?:_PNG)? begin (\d+)x(\d+) \d+\s*\n(.*?);\s*thumbnail(?:_PNG)? end",
-                         text, re.S):
-        area = int(m.group(1)) * int(m.group(2))
-        if area > best:
-            b64 = "".join(line.lstrip("; ").strip() for line in m.group(3).splitlines())
-            try:
-                data = base64.b64decode(b64)
-            except ValueError:
-                continue
-            if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) <= MAX_THUMB:
-                thumb, best = (data, "png"), area
-
     return {
         "name": None,
         "settings": settings_to_fields(cfg),
@@ -246,10 +267,16 @@ def parse_gcode(path):
     }
 
 
-def parse(path, filename):
+def find_plate(plates, index):
+    """The plate with this index, else the first one."""
+    return next((p for p in plates if p["index"] == index), plates[0])
+
+
+def parse(path, filename, plate_index=None):
+    """plate_index: the plate whose thumbnail is read (default: the first)."""
     lower = filename.lower()
     if lower.endswith(".3mf"):
-        return parse_3mf(path)
+        return parse_3mf(path, plate_index)
     if lower.endswith(".gcode"):
         return parse_gcode(path)
     raise ParseError("Only .3mf and .gcode files can be read.")
@@ -259,7 +286,7 @@ def plate_to_print_fields(parsed, plate_index, materials):
     """Combines the settings + the chosen plate into fields for a print.
     Returns (fields, filaments, thumbnail)."""
     plates = parsed["plates"]
-    plate = next((p for p in plates if p["index"] == plate_index), plates[0])
+    plate = find_plate(plates, plate_index)
     fields = dict(parsed["settings"])
     fields.update({k: v for k, v in plate["fields"].items() if v is not None})
     # without slice info (project file) we only know the configured slots

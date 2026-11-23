@@ -23,6 +23,24 @@ _SAFE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9]+$")
 log = logging.getLogger("printvault.thumbs")
 
 
+SNIFF_BYTES = 12
+# content type → ffmpeg demuxer, so ffmpeg never guesses (a playlist named x.jpg stays a broken photo)
+DEMUXERS = {"jpg": "jpeg_pipe", "png": "png_pipe", "gif": "gif", "webp": "webp_pipe"}
+
+
+def sniff(head):
+    """Extension that belongs to the content (its first bytes), or None when it is not a photo."""
+    if head.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if head.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
 def is_photo(stored_name):
     return bool(stored_name) and bool(_SAFE.match(stored_name)) and \
         stored_name.rsplit(".", 1)[1].lower() in PHOTO_EXT
@@ -40,9 +58,9 @@ def missing(upload_dir, stored_name):
     return [s for s in SIZES if not os.path.exists(thumb_path(upload_dir, stored_name, s))]
 
 
-def ffmpeg_cmd(src, dst, size):
+def ffmpeg_cmd(src, dst, size, kind):
     return ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
-            "-i", src, "-map", "0:v:0", "-frames:v", "1", "-map_metadata", "-1",
+            "-protocol_whitelist", "file", "-f", DEMUXERS[kind], "-i", src, "-map", "0:v:0", "-frames:v", "1", "-map_metadata", "-1",
             "-vf", f"scale='min({size},iw)':-1:flags=lanczos",
             "-c:v", "libwebp", "-quality", "82", "-f", "webp", dst]
 
@@ -61,7 +79,11 @@ def make(upload_dir, stored_name):
         dst = thumb_path(upload_dir, stored_name, size)
         tmp = f"{dst}.tmp-{os.getpid()}-{threading.get_ident()}"
         try:
-            r = subprocess.run(ffmpeg_cmd(src, tmp, size), capture_output=True, timeout=TIMEOUT)
+            with open(src, "rb") as fh:
+                kind = sniff(fh.read(SNIFF_BYTES))
+            if kind is None:
+                raise ValueError("not a JPEG, PNG, GIF or WebP image")
+            r = subprocess.run(ffmpeg_cmd(src, tmp, size, kind), capture_output=True, timeout=TIMEOUT)
             if r.returncode != 0 or not os.path.getsize(tmp):
                 raise RuntimeError(r.stderr.decode("utf-8", "replace").strip()[-300:] or f"exit {r.returncode}")
             os.replace(tmp, dst)

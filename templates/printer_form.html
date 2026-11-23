@@ -1,14 +1,6 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui with context %}
-{% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault<script>
-  (function () {
-    var model = document.getElementById('bambu-model'), field = document.getElementById('camera-type-field');
-    function sync() { field.hidden = model.value !== 'other'; }
-    model.addEventListener('change', sync);
-    sync();
-  })();
-</script>
-{% endblock %}
+{% block title %}{{ "Edit printer" if pr.id else "New printer" }} · Printvault{% endblock %}
 {% block content %}
 <a class="crumb" href="{{ url_for('printers') }}">{{ icon('back') }}Printers</a>
 <header class="dhead">
@@ -41,7 +33,7 @@
     <label>IP address<input name="ip" value="{{ pr.ip or '' }}" placeholder="e.g. 192.0.2.10" inputmode="decimal" autocomplete="off"></label>
     <label>Serial number<input name="serial" value="{{ pr.serial or '' }}" placeholder="e.g. 00M00A000000000" autocomplete="off"></label>
     <label>Access code<input type="password" name="access_code" value="" autocomplete="new-password"
-      placeholder="{{ 'set, leave empty to keep' if pr.has_access_code else '8 characters' }}"></label>
+      placeholder="{{ 'set, leave empty to keep (a new IP address needs it again)' if pr.has_access_code else '8 characters' }}"></label>
     <label class="check"><input type="checkbox" name="mqtt_enabled" value="1" {% if pr.mqtt_enabled %}checked{% endif %}> Live connection on</label>
   </fieldset>
   <fieldset class="wide">
@@ -57,12 +49,4 @@
     <a class="btn ghost" href="{{ url_for('printers') }}">Cancel</a>
   </div>
 </form>
-<script>
-  (function () {
-    var model = document.getElementById('bambu-model'), field = document.getElementById('camera-type-field');
-    function sync() { field.hidden = model.value !== 'other'; }
-    model.addEventListener('change', sync);
-    sync();
-  })();
-</script>
 {% endblock %}

@@ -9,6 +9,7 @@ import re
 import sqlite3
 import threading
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import closing
 
@@ -23,6 +24,22 @@ URL_RE = re.compile(r"^https?://[^\s/?#]+(/[^\s?#]*)?$", re.I)
 
 class NotifyError(Exception):
     pass
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib would send the Authorization header along to the new host."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirects)
+
+
+def server_of(url):
+    """(scheme, host:port) of a URL, to see whether two URLs are the same server."""
+    parts = urllib.parse.urlsplit((url or "").lower())
+    return parts.scheme, parts.netloc
 
 
 def load_settings(db):
@@ -56,7 +73,7 @@ def post(cfg, title, message, tags=(), priority=None, urlopen=None, timeout=10):
     if cfg.get("ntfy_token"):
         req.add_header("Authorization", f"Bearer {cfg['ntfy_token']}")
     try:
-        with (urlopen or urllib.request.urlopen)(req, timeout=timeout) as resp:
+        with (urlopen or _opener.open)(req, timeout=timeout) as resp:
             resp.read(4096)
     except urllib.error.HTTPError as e:
         raise NotifyError(f"Sending the ntfy notification failed: HTTP {e.code}{_reason(e)}") from None
@@ -66,7 +83,9 @@ def post(cfg, title, message, tags=(), priority=None, urlopen=None, timeout=10):
 
 def _reason(err):
     """The error reason from the server's response. ntfy answers with JSON such as
-    {"code": 40009, "http": 400, "error": "…"}; another server with text or HTML."""
+    {"code": 40009, "http": 400, "error": "…"}. Anything else is not shown: it is not from ntfy."""
+    if 300 <= err.code < 400:
+        return ": the server answers with a redirect; enter the final address"
     try:
         body = err.read(2048).decode("utf-8", "replace").strip()
     except Exception:
@@ -78,8 +97,7 @@ def _reason(err):
             return f": {str(data['error'])[:300]}{code}"
     except ValueError:
         pass
-    text = " ".join(body.split())[:200]
-    return f": {text} — is this really an ntfy server?" if text else f" {err.reason}"
+    return f" {err.reason}" + (" — is this really an ntfy server?" if body else "")
 
 
 class Notifier:

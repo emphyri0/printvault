@@ -99,9 +99,10 @@ class HttpErrorTest(unittest.TestCase):
         msg = self.post(self.fail_with(400, b'{"code":40009,"http":400,"error":"invalid request: topic invalid"}'))
         self.assertEqual(msg, "Sending the ntfy notification failed: HTTP 400: invalid request: topic invalid (ntfy code 40009)")
 
-    def test_non_ntfy_body_shown(self):
+    def test_non_ntfy_body_not_shown(self):
         msg = self.post(self.fail_with(400, b"<html><body>Bad\n  Request</body></html>"))
-        self.assertIn("HTTP 400: <html><body>Bad Request</body></html>", msg)
+        self.assertIn("HTTP 400 Bad Request", msg)
+        self.assertNotIn("<html>", msg)
         self.assertIn("ntfy server", msg)
 
     def test_empty_body(self):
@@ -330,11 +331,11 @@ class PagesTest(unittest.TestCase):
     def test_test_button(self):
         set_cfg()
         f = FakeUrlopen()
-        with mock.patch.object(notify.urllib.request, "urlopen", f):
+        with mock.patch.object(notify._opener, "open", f):
             html = self.c.post("/settings/test", follow_redirects=True).get_data(as_text=True)
         self.assertIn("Test notification sent", html)
         self.assertEqual(f.bodies()[0]["topic"], "pv-test")
-        with mock.patch.object(notify.urllib.request, "urlopen", FakeUrlopen(fail=OSError("gone"))):
+        with mock.patch.object(notify._opener, "open", FakeUrlopen(fail=OSError("gone"))):
             html = self.c.post("/settings/test", follow_redirects=True).get_data(as_text=True)
         self.assertIn("failed", html)
 

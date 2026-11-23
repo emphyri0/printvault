@@ -54,9 +54,13 @@ mkdir -p data
 docker compose up -d --build
 ```
 
-Printvault now runs on port **8100** of that machine: `http://<host>:8100`. Two containers start: `printvault` (the web app) and `printvault-mqtt` (the listener for the printers).
+Printvault now runs at `http://127.0.0.1:8100` on that machine. Two containers start: `printvault` (the web app) and `printvault-mqtt` (the listener for the printers).
 
-`docker-compose.yml` publishes the port on all interfaces (`0.0.0.0:8100`) so other devices on your LAN can use it. To limit it to the machine itself (e.g. behind a reverse proxy on the same host), change that line to `127.0.0.1:8100:5000`. See the warning above.
+By default only the machine itself can reach it. To use it from other devices, either put a reverse proxy on the same host in front of it, or set `PRINTVAULT_BIND=0.0.0.0` in `.env` and open `http://<ip-address>:8100`. See the warning above: there is no login.
+
+**Opening it by name** (`nas.lan`, `printvault.example`): add the name to `ALLOWED_HOSTS` in `.env`, otherwise Printvault refuses it with *421 Host … is not allowed* and says so in the log (`docker compose logs printvault`). `localhost` and IP addresses always work. After a change in `.env`: `docker compose up -d`.
+
+**Upgrading from a version that listened on all interfaces:** set both variables before `docker compose up -d --build`, or other devices can no longer reach it.
 
 Updating: `git pull && docker compose up -d --build`. The database is migrated automatically.
 
@@ -67,6 +71,8 @@ All settings are in `.env` (see `.env.example`):
 | Variable | Default | Meaning |
 |---|---|---|
 | `SECRET_KEY` | *(required)* | Long random string for the session cookie |
+| `PRINTVAULT_BIND` | `127.0.0.1` | Address port 8100 is published on; `0.0.0.0` = the whole network |
+| `ALLOWED_HOSTS` | *(empty)* | Extra host names, comma-separated; `localhost` and IP addresses always work |
 | `MAX_UPLOAD_MB` | `200` | Maximum upload size |
 | `PRINTVAULT_TZ` | `Europe/Brussels` | Time zone for print times and maintenance |
 | `CAMERA_FPS`, `CAMERA_WIDTH` | `5`, `1280` | Live image of RTSPS cameras |
@@ -132,6 +138,18 @@ Every photo gets two WebP versions (600 px for cards, 1600 px for the detail pag
 ### Behind a reverse proxy
 
 Absolute links (such as the download URL for Bambu Studio) use the scheme and host of the request. Behind a reverse proxy that terminates HTTPS, set `TRUSTED_PROXIES=1` (the number of proxies) so the app reads `X-Forwarded-Proto` and `X-Forwarded-Host` through werkzeug's `ProxyFix`. Caddy and Traefik send those headers by default; nginx needs `proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header X-Forwarded-Host $host;`. Only switch it on when the app can be reached exclusively through the proxy; otherwise anyone can send fake headers and make Printvault build links to another host.
+
+With `TRUSTED_PROXIES` on, the host check uses the name from `X-Forwarded-Host`: put the name people type in the browser in `ALLOWED_HOSTS` (e.g. `ALLOWED_HOSTS=printvault.example`).
+
+### Security
+
+There is no login, so the network is the boundary. Within it, Printvault protects you against other websites in your browser:
+
+- Only known host names (`ALLOWED_HOSTS`), against DNS rebinding.
+- Requests that change something must come from Printvault's own pages (`Sec-Fetch-Site`, `Origin`, `Referer`). Scripts without those headers, such as curl, still work.
+- The stored ntfy token is cleared when the server changes, and a new printer address needs the access code again, so neither can be sent elsewhere unnoticed.
+- MakerWorld redirects are only followed to MakerWorld; ntfy redirects are not followed.
+- Photos are recognised by their content, not their name. At most 4 live videos at the same time.
 
 ## Development
 

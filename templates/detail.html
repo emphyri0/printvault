@@ -39,9 +39,9 @@
       <span>{{ "No photos yet. Add one:" if not photos else "Add photos" }}</span>
       <span class="btns">
         <label class="btn small">{{ icon('camera') }}<span>Take photo</span>
-          <input class="sr" type="file" name="photos" accept="image/*" capture="environment" onchange="this.form.submit()"></label>
+          <input class="sr" type="file" name="photos" accept="image/*" capture="environment" data-autosubmit></label>
         <label class="btn small">{{ icon('upload') }}<span>Choose</span>
-          <input class="sr" type="file" name="photos" accept="image/*" multiple onchange="this.form.submit()"></label>
+          <input class="sr" type="file" name="photos" accept="image/*" multiple data-autosubmit></label>
       </span>
     </form>
   </section>

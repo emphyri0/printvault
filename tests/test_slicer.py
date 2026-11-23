@@ -147,7 +147,7 @@ class SlicerTests(unittest.TestCase):
     def test_sliced_3mf_plate_2_multicolor(self):
         path = os.path.join(self.dir, "x.gcode.3mf")
         make_3mf(path)
-        fields, fil, thumb = slicer.plate_to_print_fields(slicer.parse(path, "x.gcode.3mf"), 2, MATERIALS)
+        fields, fil, thumb = slicer.plate_to_print_fields(slicer.parse(path, "x.gcode.3mf", 2), 2, MATERIALS)
         self.assertEqual(fields["print_time_min"], 200)
         self.assertEqual(fields["filament_g"], 80.1)
         self.assertEqual(fields["material"], "Other")
