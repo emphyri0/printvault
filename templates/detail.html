@@ -145,9 +145,9 @@
     <li>
       <a class="fname" href="{{ url_for('download', file_id=f.id) }}" title="Download">{{ icon('file') }}{{ f.original_name }}</a>
       <span class="meta num">{{ f.size|filesize }}</span>
-      {% if f.original_name.lower().endswith(('.3mf', '.gcode')) %}
+      {% if f.stored_name.endswith(('.3mf', '.gcode')) %}
       <form method="post" action="{{ url_for('apply_file', file_id=f.id) }}">
-        {% if f.original_name.lower().endswith('.3mf') %}<input name="plate" inputmode="numeric" value="{{ p.plate or 1 }}" title="Plate number" aria-label="Plate number">{% endif %}
+        {% if f.stored_name.endswith('.3mf') %}<input name="plate" inputmode="numeric" value="{{ p.plate or 1 }}" title="Plate number" aria-label="Plate number">{% endif %}
         <button class="btn small" title="Overwrites the slicer fields with the data from this file">Read data</button>
       </form>
       {% endif %}

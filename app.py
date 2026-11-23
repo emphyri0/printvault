@@ -1,5 +1,7 @@
 import html
+import http.client
 import json
+import math
 import os
 import re
 import sqlite3
@@ -14,6 +16,7 @@ from datetime import date, datetime
 from flask import (Flask, Response, abort, flash, g, jsonify, redirect, render_template, request,
                    send_from_directory, url_for)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.routing import IntegerConverter
 from werkzeug.utils import secure_filename
 
 import bambu_errors
@@ -51,6 +54,16 @@ LABELS = {
 }
 
 app = Flask(__name__)
+
+
+class IdConverter(IntegerConverter):
+    """Numbers in URLs; more than SQLite can store is simply not found."""
+
+    def __init__(self, url_map, **options):
+        super().__init__(url_map, **{"max": 2 ** 63 - 1, **options})
+
+
+app.url_map.converters["int"] = IdConverter
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or os.urandom(32)
 security.init_app(app, os.environ.get("ALLOWED_HOSTS"))
 app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("MAX_UPLOAD_MB", "200")) * 1024 * 1024
@@ -224,13 +237,15 @@ def ext_of(filename):
 
 
 def num(value, cast=float):
+    """Number from a form or URL; None when it is empty, not a number or absurdly large."""
     value = (value or "").strip().replace(",", ".")
     if not value:
         return None
     try:
-        return cast(float(value))
+        f = float(value)
     except ValueError:
         return None
+    return cast(f) if math.isfinite(f) and abs(f) <= 1e12 else None
 
 
 def onoff(value):
@@ -306,6 +321,34 @@ SLICER_FIELDS = {"material": "material", "color": "colour", "filament_g": "weigh
                  "bed_temp": "bed temperature", "plate": "plate number"}
 
 
+def drop_unknown_printer(data):
+    """The printer may have been deleted while the form was open."""
+    if data["printer_id"] is not None and not get_db().execute(
+            "SELECT 1 FROM printers WHERE id = ?", (data["printer_id"],)).fetchone():
+        data["printer_id"] = None
+        flash("The chosen printer no longer exists; the print was saved without a printer.", "warn")
+
+
+def clean_name(filename, ext):
+    """Safe file name for display and download. Letters of every script stay; folders, control characters
+    and characters that Windows refuses do not. Always ends in .<ext>."""
+    name = "".join(c for c in re.split(r"[\\/]", filename)[-1] if c.isprintable())
+    stem = re.sub(rf"\.?{re.escape(ext)}$", "", re.sub(r'[<>:"|?*]', "_", name), flags=re.I).strip(" .")
+    return f"{(stem or 'file')[:150 - len(ext) - 1]}.{ext}"
+
+
+def download_name(f):
+    """original_name, with the extension that older versions lost for names like '日本.3mf'."""
+    name, ext = f["original_name"], ext_of(f["stored_name"])
+    return name if ext_of(name) or not ext else f"{name}.{ext}"
+
+
+def print_name(filename):
+    """'my_part.gcode.3mf' → 'my part'."""
+    stem = re.sub(r"(\.gcode)?\.(3mf|gcode)$", "", filename, flags=re.I)
+    return stem.replace("_", " ").strip()[:200] or "Untitled print"
+
+
 def store_bytes(print_id, kind, content, ext, original_name):
     if kind == "photo":
         ext = thumbs.sniff(content)
@@ -325,15 +368,13 @@ def store_bytes(print_id, kind, content, ext, original_name):
 
 def apply_slicer_file(print_id, path, original_name, plate_index=None, overwrite_name=False):
     """Reads a 3mf/gcode file and updates the print. Returns a short summary."""
-    parsed = slicer.parse(path, original_name, plate_index)
+    parsed = slicer.parse(path, path, plate_index)
     plates = parsed["plates"]
-    if plate_index is None:
-        plate_index = plates[0]["index"]
+    plate_index = slicer.find_plate(plates, plate_index)["index"]
     fields, filaments, thumb = slicer.plate_to_print_fields(parsed, plate_index, MATERIALS)
     db = get_db()
     if overwrite_name:
-        stem = re.sub(r"(\.gcode)?\.(3mf|gcode)$", "", original_name, flags=re.I)
-        fields["name"] = (parsed.get("name") or stem.replace("_", " ")).strip()[:200] or "Untitled print"
+        fields["name"] = (parsed.get("name") or "").strip()[:200] or print_name(original_name)
     if filaments:
         p = db.execute("SELECT notes FROM prints WHERE id = ?", (print_id,)).fetchone()
         line = "Filament (slicer): " + slicer.filament_summary(filaments)
@@ -370,6 +411,7 @@ def save_uploads(print_id, uploads):
         if not f or not f.filename:
             continue
         ext = ext_of(f.filename)
+        original_name = clean_name(f.filename, ext)
         if ext in PHOTO_EXT:
             kind = "photo"
             ext = photo_type(f)
@@ -386,7 +428,7 @@ def save_uploads(print_id, uploads):
         f.save(path)
         db.execute(
             "INSERT INTO files (print_id, kind, stored_name, original_name, size) VALUES (?,?,?,?,?)",
-            (print_id, kind, stored, secure_filename(f.filename) or stored, os.path.getsize(path)),
+            (print_id, kind, stored, original_name, os.path.getsize(path)),
         )
         if kind == "photo":
             THUMBS.add(stored)
@@ -632,6 +674,7 @@ def new_print():
         if not data["name"]:
             flash("Give the print a name.", "warn")
             return render_template("form.html", p=data, materials=MATERIALS, statuses=STATUSES)
+        drop_unknown_printer(data)
         db = get_db()
         cur = db.execute(
             f"INSERT INTO prints ({', '.join(data)}) VALUES ({', '.join('?' * len(data))})",
@@ -675,16 +718,14 @@ def import_file():
         flash("Choose a .3mf or .gcode file.", "warn")
         return redirect(url_for("new_print"))
     db = get_db()
-    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'planned')", ("Import…",))
+    cur = db.execute("INSERT INTO prints (name, status) VALUES (?, 'planned')", (print_name(clean_name(upload.filename, ext_of(upload.filename))),))
     print_id = cur.lastrowid
     save_uploads(print_id, [upload])
     f = db.execute("SELECT * FROM files WHERE print_id = ? ORDER BY id DESC LIMIT 1", (print_id,)).fetchone()
     try:
         found, plate_info = apply_slicer_file(print_id, os.path.join(UPLOAD_DIR, f["stored_name"]),
-                                              upload.filename, overwrite_name=True)
+                                              f["original_name"], overwrite_name=True)
     except slicer.ParseError as e:
-        db.execute("UPDATE prints SET name = ? WHERE id = ?", (upload.filename[:200], print_id))
-        db.commit()
         flash(f"{e} The file was kept; fill in the rest yourself.", "warn")
         return redirect(url_for("edit_print", print_id=print_id))
     if found:
@@ -697,7 +738,7 @@ def import_file():
 @app.route("/file/<int:file_id>/apply", methods=["POST"])
 def apply_file(file_id):
     f = get_db().execute("SELECT * FROM files WHERE id = ?", (file_id,)).fetchone()
-    if f is None or ext_of(f["original_name"]) not in {"3mf", "gcode"}:
+    if f is None or ext_of(f["stored_name"]) not in {"3mf", "gcode"}:
         abort(404)
     try:
         found, plate_info = apply_slicer_file(f["print_id"], os.path.join(UPLOAD_DIR, f["stored_name"]),
@@ -722,7 +763,7 @@ def show_print(print_id):
                 bambu_status.stage_group(r["stage"]) if r["stage"] is not None else None, r["percent"], r["layer"]]
                for r in db.execute("SELECT * FROM print_samples WHERE print_id = ? ORDER BY recorded_at", (print_id,))]
     models = [f for f in files if f["kind"] == "model"]
-    threemf = [f for f in models if f["original_name"].lower().endswith(".3mf")]
+    threemf = [f for f in models if ext_of(f["stored_name"]) == "3mf"]
     return render_template("detail.html", p=p, printer=printer, cover=cover, ams=ams, samples=samples,
                            photos=[f for f in files if f["kind"] == "photo"], models=models,
                            studio=bambu_studio_links(threemf[-1]) if threemf else None,
@@ -758,6 +799,7 @@ def edit_print(print_id):
             return render_template("form.html", p={**data, "id": print_id}, base=request.form.get("base"),
                                    materials=MATERIALS, statuses=STATUSES)
         keep_changes(data, request.form.get("base"), p)
+        drop_unknown_printer(data)
         db = get_db()
         mw_msg = enrich_from_makerworld(db, print_id, p, data)
         db.execute(
@@ -860,7 +902,7 @@ def download(file_id):
     if f is None:
         abort(404)
     return send_from_directory(UPLOAD_DIR, f["stored_name"], as_attachment=True,
-                               download_name=f["original_name"])
+                               download_name=download_name(f))
 
 
 # ---------- Printers ----------
@@ -1309,7 +1351,7 @@ def ams_history(printer_id, hours=24):
 # ---------- MakerWorld import ----------
 
 MW_API = "https://makerworld.com/api/v1/design-service/design/{}"
-MW_URL = re.compile(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d+)", re.I)
+MW_URL = re.compile(r"^https?://(www\.)?makerworld\.com/(?:[a-z]{2}(?:-[a-z]{2})?/)?models/(\d{1,20})(?!\d)", re.I)
 MW_IMAGE_HOST = re.compile(r"^https://[a-z0-9.-]+\.bblmw\.com/")
 MW_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 MAX_COVER_BYTES = 15 * 1024 * 1024
@@ -1353,6 +1395,25 @@ def _strip_html(text):
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
+# MakerWorld's API is not documented: every field may be missing or of another type.
+def _dict(value):
+    return value if isinstance(value, dict) else {}
+
+
+def _dicts(value):
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+
+
+def _text(value):
+    return value.replace("\r\n", "\n").strip() if isinstance(value, str) else ""
+
+
+def _number(value):
+    """Positive number, or None."""
+    f = slicer.to_float(value)
+    return f if f and f > 0 else None
+
+
 def fetch_makerworld(url):
     """Fetches the metadata of a MakerWorld model. Returns (print data, cover);
     cover is (bytes, extension) or None."""
@@ -1362,76 +1423,70 @@ def fetch_makerworld(url):
     design_id = m.group(2)
     try:
         d = json.loads(_http_get(MW_API.format(design_id), 5 * 1024 * 1024))
-    except MakerWorldError:
-        raise
-    except Exception as e:
-        raise MakerWorldError(f"Could not fetch MakerWorld ({e}). Fill in the print manually.")
-    if not d.get("title"):
+    except (OSError, http.client.HTTPException, ValueError, RecursionError) as e:
+        raise MakerWorldError(f"Could not fetch MakerWorld ({e}). Fill in the print manually.") from e
+    d = _dict(d)
+    title = _text(d.get("title"))
+    if not title:
         raise MakerWorldError("Model not found on MakerWorld.")
 
-    instances = d.get("instances") or []
+    instances = _dicts(d.get("instances"))
     inst = next((i for i in instances if i.get("id") == d.get("defaultInstanceId")), None) \
         or next((i for i in instances if i.get("isDefault")), None) \
         or (instances[0] if instances else {})
-    filaments = inst.get("instanceFilaments") or []
-
-    material = ""
-    types = {f.get("type", "").upper() for f in filaments if f.get("type")}
-    if len(types) == 1:
-        t = types.pop()
-        material = t if t in MATERIALS else "Other"
-    elif types:
-        material = "Other"
+    profile = _text(inst.get("title"))
+    filaments = [{"type": _text(f.get("type")), "color": _text(f.get("color")), "used_g": _number(f.get("usedG"))}
+                 for f in _dicts(inst.get("instanceFilaments"))]
+    materials = {slicer.material_of(f["type"], MATERIALS) for f in filaments if f["type"]}
 
     notes = []
-    if inst.get("title"):
-        notes.append(f"Profile: {inst['title']}")
+    if profile:
+        notes.append(f"Profile: {profile}")
     if filaments:
-        notes.append("Filament: " + ", ".join(
-            f"{f.get('type', '?')} {f.get('color', '')} ({f.get('usedG', '?')} g)".strip() for f in filaments))
+        notes.append("Filament: " + slicer.filament_summary(filaments))
     if inst.get("needAms"):
         notes.append("Requires AMS.")
-    summary = _strip_html(d.get("summary"))
+    summary = _strip_html(_text(d.get("summary"))[:20000])
     if summary:
-        notes.append("")
-        notes.append(summary[:3000])
+        notes += ["", summary[:3000]]
 
-    creator = d.get("designCreator") or {}
-    prediction = inst.get("prediction")
+    designer = _text(_dict(d.get("designCreator")).get("name"))
+    prediction = _number(inst.get("prediction"))
+    layer = re.search(r"(0\.\d{1,4})\s*mm\s*layer", profile, re.I)
+    tags = d.get("tags") if isinstance(d.get("tags"), list) else []
     data = {
-        "name": d["title"][:200],
-        "description": f"MakerWorld model by {creator.get('name')}" if creator.get("name") else "MakerWorld model",
-        "material": material,
-        "color": filaments[0].get("color", "") if len(filaments) == 1 else "",
-        "filament_g": float(inst["weight"]) if inst.get("weight") else None,
+        "name": title[:200],
+        "description": f"MakerWorld model by {designer}" if designer else "MakerWorld model",
+        "material": (materials.pop() if len(materials) == 1 else "Other") if materials else "",
+        "color": filaments[0]["color"] if len(filaments) == 1 else "",
+        "filament_g": _number(inst.get("weight")),
         "print_time_min": round(prediction / 60) if prediction else None,
-        "layer_height": None,
+        "layer_height": float(layer.group(1)) if layer else None,
         "nozzle": None,
         "status": "planned",
-        "tags": ", ".join((d.get("tags") or [])[:8]),
-        "notes": "\n".join(notes),
+        "tags": ", ".join([t for t in map(_text, tags) if t][:8]),
+        "notes": "\n".join(notes).strip(),
         "printed_on": None,
         "printer_id": None,
         "source_url": f"https://makerworld.com/en/models/{design_id}",
-        "designer": creator.get("name"),
-        "license": d.get("license"),
+        "designer": designer or None,
+        "license": _text(d.get("license")) or None,
     }
-    lh = re.search(r"(0\.\d+)\s*mm\s*layer", inst.get("title") or "", re.I)
-    if lh:
-        data["layer_height"] = float(lh.group(1))
+    return data, fetch_cover(_text(d.get("coverUrl")))
 
-    cover = None
-    cover_url = d.get("coverUrl") or ""
-    if MW_IMAGE_HOST.match(cover_url):
-        ext = ext_of(cover_url.split("?")[0])
-        if ext in PHOTO_EXT:
-            try:
-                content = _http_get(cover_url, MAX_COVER_BYTES)
-                ext = thumbs.sniff(content)
-                cover = (content, ext) if ext else None
-            except Exception:
-                cover = None
-    return data, cover
+
+def fetch_cover(url):
+    """(bytes, extension), or None when there is no usable cover."""
+    if not MW_IMAGE_HOST.match(url):
+        return None
+    try:
+        content = _http_get(url, MAX_COVER_BYTES)
+    except (OSError, http.client.HTTPException, MakerWorldError) as e:
+        app.logger.warning("MakerWorld cover not fetched: %s", e)
+        return None
+    ext = thumbs.sniff(content)
+    return (content, ext) if ext else None
+
 
 def save_makerworld_cover(db, print_id, cover):
     content, ext = cover
@@ -1451,14 +1506,15 @@ MW_FILL_FIELDS = ("description", "material", "color", "filament_g", "layer_heigh
 
 
 def enrich_from_makerworld(db, print_id, old, data):
-    """Completes `data` with MakerWorld data when a (new) MakerWorld link was given,
-    or when the print has no MakerWorld cover yet. Returns a flash message or None."""
+    """Completes `data` with MakerWorld data when a new MakerWorld link was given, or when an earlier
+    attempt failed (neither a cover nor a designer yet). Returns a flash message or None."""
     url = data.get("source_url") or ""
-    if not MW_URL.match(url):
+    new, known = MW_URL.match(url), MW_URL.match(old["source_url"] or "")
+    if not new:
         return None
     has_cover = db.execute("SELECT 1 FROM files WHERE print_id = ? AND original_name LIKE 'makerworld-cover.%'",
                            (print_id,)).fetchone()
-    if url == (old["source_url"] or "") and has_cover:
+    if known and known.group(2) == new.group(2) and (has_cover or old["designer"]):
         return None
     try:
         mw, cover = fetch_makerworld(url)
