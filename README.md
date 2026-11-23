@@ -7,11 +7,25 @@ A self-hosted archive for your 3D prints: photos, model files, filament, print t
 > [!WARNING]
 > **Printvault has no login.** Anyone who can reach it can see, change and delete everything, and watch the printer camera. Only run it on a network you trust (your home LAN, a VPN such as WireGuard or Tailscale), never directly on the internet. Put it behind a reverse proxy with authentication if you need more.
 
-![Home page with the running print, temperatures and the print gallery](docs/screenshots/home.png)
+## Screenshots
 
-| Print detail with temperature chart | Maintenance | Phone |
-|---|---|---|
-| ![Print detail](docs/screenshots/detail.png) | ![Maintenance](docs/screenshots/maintenance.png) | ![Phone](docs/screenshots/phone.png) |
+### Home
+
+<img src="docs/screenshots/home.png" alt="Home page with the running print, temperatures and the print gallery" width="100%">
+
+### Print detail
+
+<img src="docs/screenshots/detail.png" alt="Print detail with the live status and print settings" width="100%">
+
+### Maintenance
+
+<img src="docs/screenshots/maintenance.png" alt="Maintenance tasks per printer" width="100%">
+
+### Phone
+
+<p align="center">
+  <img src="docs/screenshots/phone.png" alt="Home page on a phone" width="360">
+</p>
 
 *Screenshots from a demo database with made-up prints and generated images.*
 
