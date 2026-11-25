@@ -122,6 +122,7 @@ def jpeg_auth_packet(access_code):
 def _tls_connect(ip, timeout):
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.verify_mode = ssl.CERT_NONE   # the printer has a self-signed certificate (as with MQTT)
     sock = socket.create_connection((ip, JPEG_PORT), timeout=timeout)
     try:

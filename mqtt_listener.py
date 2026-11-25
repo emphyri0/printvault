@@ -484,6 +484,7 @@ class PrinterConnection:
         c.username_pw_set("bblp", cfg["access_code"])
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         ctx.verify_mode = ssl.CERT_NONE   # the printer uses a self-signed certificate
         c.tls_set_context(ctx)
         c.reconnect_delay_set(min_delay=2, max_delay=60)

@@ -836,18 +836,19 @@ cameras = camera.CameraManager()
 # Snapshots are kept ~20 s per printer (a failed attempt too), so that several open tabs
 # together make at most one connection to the printer every 20 s.
 SNAPSHOT_CACHE_SECONDS = 20
+SNAPSHOT_FAILED = "The camera image could not be fetched. The reason is in the log."
 # Each live stream keeps one of gunicorn's 8 threads (see Dockerfile) busy; leave some for the pages.
 MAX_STREAMS = 4
 _streams = 0
 _streams_lock = threading.Lock()
-_snapshots = {}                   # printer_id -> (rtsp url, time, jpeg or CameraError)
+_snapshots = {}                   # printer_id -> (rtsp url, time, jpeg; None = failed)
 _snapshot_locks = {}
 _snapshot_locks_guard = threading.Lock()
 
 
 def cached_snapshot(printer_id, ip, access_code, route=bambu_models.RTSPS):
     """JPEG from the printer: a fresh frame from a running live stream, else from the cache or fetched anew.
-    Raises CameraError (also a cached one) when there is no image."""
+    None when there is no image (the reason is logged, once per attempt)."""
     url = (route, camera.rtsp_url(ip, access_code))
     cam = cameras.peek(printer_id)
     if cam is not None and cam.key == url:
@@ -862,10 +863,9 @@ def cached_snapshot(printer_id, ip, access_code, route=bambu_models.RTSPS):
             try:
                 result = camera.grab_snapshot(ip, access_code, route=route)
             except camera.CameraError as e:
-                result = e
+                app.logger.warning("printer %s: camera image failed: %s", printer_id, camera.redact(e, access_code))
+                result = None
             hit = _snapshots[printer_id] = (url, time.monotonic(), result)
-    if isinstance(hit[2], camera.CameraError):
-        raise hit[2]
     return hit[2]
 
 
@@ -912,10 +912,9 @@ def camera_stream(printer_id):
 @app.route("/printers/<int:printer_id>/snapshot.jpg")
 def camera_snapshot(printer_id):
     pr, route = camera_printer(printer_id)
-    try:
-        jpeg = cached_snapshot(printer_id, pr["ip"], pr["access_code"], route)
-    except camera.CameraError as e:
-        return Response(str(e), status=502, mimetype="text/plain", headers={"Cache-Control": "no-store"})
+    jpeg = cached_snapshot(printer_id, pr["ip"], pr["access_code"], route)
+    if jpeg is None:
+        return Response(SNAPSHOT_FAILED, status=502, mimetype="text/plain", headers={"Cache-Control": "no-store"})
     return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
@@ -1201,7 +1200,7 @@ for _code in (400, 404, 405, 500):
 @app.errorhandler(413)
 def too_large(_e):
     flash("File too large.", "warn")
-    return redirect(request.referrer or url_for("index"))
+    return redirect(security.own_page(request.referrer) or url_for("index"))
 
 
 init_db()

@@ -7,10 +7,10 @@
 """
 import ipaddress
 import logging
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
-from flask import Response, current_app, request
-from werkzeug.exceptions import BadRequest
+from flask import Response, current_app, request, url_for
+from werkzeug.exceptions import BadRequest, HTTPException
 
 log = logging.getLogger("printvault.security")
 
@@ -91,6 +91,19 @@ def cross_site(headers, host):
         if value is not None:
             return None if _same_host(value, host) else f"{name}: {value}"
     return None
+
+
+def own_page(referrer):
+    """Relative URL of the Printvault page a Referer points to, or None when it is not one. The URL is built
+    anew from the matching route; nothing of the header itself ends up in it but the route's arguments."""
+    if not referrer or not _same_host(referrer, request.host):
+        return None
+    try:
+        path = unquote(urlsplit(referrer).path)
+        endpoint, args = current_app.create_url_adapter(request).match(path, method="GET")
+    except HTTPException:   # no such page, POST only, or a redirect of werkzeug itself
+        return None
+    return url_for(endpoint, **args)
 
 
 def _refuse(status, text):

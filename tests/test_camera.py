@@ -311,12 +311,18 @@ class CameraRoutesTest(unittest.TestCase):
         self.assertEqual(html.count('<span>No photo</span>'), 2)                   # done + no camera
         self.assertNotIn(CODE, html)
 
-    def test_snapshot_error_redacted(self):
-        err = camera.CameraError(camera.redact(f"{camera.rtsp_url('10.0.0.2', CODE)} gone", CODE))
-        with mock.patch("camera.grab_snapshot", side_effect=err):
-            r = self.c.get("/printers/1/snapshot.jpg")
-        self.assertEqual(r.status_code, 502)
-        self.assertNotIn("a%2Fb%40c%3A12", r.get_data(as_text=True))
+    def test_snapshot_error_details_only_in_the_log(self):
+        err = camera.CameraError(f"[Errno 111] {camera.rtsp_url('10.0.0.2', CODE)} {CODE} gone")
+        with mock.patch("camera.grab_snapshot", side_effect=err), \
+                self.assertLogs(app.app.logger, logging.WARNING) as logs:
+            first, cached = (self.c.get("/printers/1/snapshot.jpg") for _ in range(2))
+        for r in (first, cached):
+            self.assertEqual((r.status_code, r.mimetype), (502, "text/plain"))
+            self.assertEqual(r.get_data(as_text=True), app.SNAPSHOT_FAILED)
+        self.assertEqual(len(logs.output), 1)   # once per attempt, not per request
+        self.assertIn("Errno 111", logs.output[0])
+        self.assertNotIn("a%2Fb%40c%3A12", logs.output[0])
+        self.assertNotIn(CODE, logs.output[0])
 
     def test_stream_sends_multipart_frames(self):
         fake = mock.Mock(frames=lambda: iter([jpeg(1), jpeg(2)]))

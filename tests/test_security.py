@@ -4,12 +4,14 @@ import io
 import os
 import re
 import sqlite3
+import ssl
 import sys
 import tempfile
 import threading
 import time
 import unittest
 import urllib.error
+import urllib.parse
 import zipfile
 from contextlib import closing
 from pathlib import Path
@@ -19,8 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import testenv  # noqa: E402
 import app  # noqa: E402
+import camera  # noqa: E402
 import uploads  # noqa: E402
 import makerworld  # noqa: E402
+import mqtt_listener  # noqa: E402
 import notify  # noqa: E402
 import security  # noqa: E402
 import slicer  # noqa: E402
@@ -335,6 +339,69 @@ class StreamLimitTest(Base):
                 r.close()
                 r.close()   # closing twice must not free two places
             self.assertEqual(app._streams, 0)
+
+
+class TooLargeRedirectTest(Base):
+    def location(self, referrer, host="localhost"):
+        headers = {"Sec-Fetch-Site": "same-origin"}
+        if referrer is not None:
+            headers["Referer"] = referrer
+        with mock.patch.dict(app.app.config, MAX_CONTENT_LENGTH=10):
+            r = self.c.post("/print/new", data={"name": "x" * 100}, headers=headers, base_url=f"http://{host}")
+        self.assertEqual(r.status_code, 302)
+        return r.headers["Location"]
+
+    def test_back_to_own_page(self):
+        for referrer, host in (("http://localhost/print/new", "localhost"),
+                               ("http://localhost/print/new?next=http://evil.example", "localhost"),
+                               ("http://127.0.0.1:8100/print/new", "127.0.0.1:8100"),
+                               ("https://localhost/print/new", "localhost")):   # HTTPS ends at the proxy
+            self.assertEqual(self.location(referrer, host), "/print/new", referrer)
+        self.assertEqual(self.location("http://localhost/print/7/edit"), "/print/7/edit")
+
+    def test_anything_else_goes_home(self):
+        for referrer in (None, "", "http://evil.example/print/new", "//evil.example/print/new",
+                         "http://localhost:9999/print/new", "http://localhost@evil.example/print/new",
+                         "http://localhost//evil.example/", "http://localhost//evil.example/print/new",
+                         "http://localhost/\\evil.example", "http://localhost/%2F%2Fevil.example",
+                         "http://localhost/%5Cevil.example", "javascript:alert(1)", "http://[", "http://localhost:x/",
+                         "http://localhost/nothing", "http://localhost/print/import"):   # unknown; POST only
+            self.assertEqual(self.location(referrer), "/", referrer)
+
+
+class ThumbPathTest(Base):
+    def test_no_way_out_of_the_upload_folder(self):
+        secret = os.path.join(os.path.dirname(app.UPLOAD_DIR), "secret.jpg")
+        testenv.check(secret)
+        with open(secret, "wb") as fh:
+            fh.write(JPEG)
+        self.addCleanup(os.remove, secret)
+        for name in ("../secret.jpg", "..%2Fsecret.jpg", "%2e%2e%2fsecret.jpg", "..%5Csecret.jpg", "..",
+                     "%2Fetc%2Fpasswd", "secret.jpg%00", "secret.jpg%0A", urllib.parse.quote(secret, safe="")):
+            with self.c.get(f"/thumb/600/{name}") as r:
+                self.assertEqual(r.status_code, 404, name)
+        for name in ("../secret.jpg", "..\\secret.jpg", secret, "/etc/passwd", "x/y.jpg", "..", ".jpg", "x.jpg\0", "x.jpg\n"):
+            self.assertFalse(thumbs.is_photo(name), name)
+
+
+class TlsVersionTest(unittest.TestCase):
+    """The printer connections ask for TLS 1.2 themselves, whatever the defaults of Python or OpenSSL are."""
+
+    def setUp(self):
+        self.ctx = ssl.create_default_context()
+        self.ctx.minimum_version = ssl.TLSVersion.MINIMUM_SUPPORTED
+        patch = mock.patch("ssl.create_default_context", return_value=self.ctx)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_camera(self):
+        with mock.patch("socket.create_connection"), mock.patch.object(ssl.SSLContext, "wrap_socket"):
+            camera._tls_connect("10.0.0.2", 1)
+        self.assertEqual(self.ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
+
+    def test_mqtt(self):
+        mqtt_listener.PrinterConnection({"id": 1, "ip": "10.0.0.2", "serial": "S", "access_code": "x"}, None)
+        self.assertEqual(self.ctx.minimum_version, ssl.TLSVersion.TLSv1_2)
 
 
 class HeadersTest(Base):
